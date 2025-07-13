@@ -9,6 +9,7 @@ print("--- Importando módulos locales ---")
 from modules.data_ingestion import run_historical_load
 from modules.presentation import create_layout, create_generador_view, create_configuracion_view
 from modules.database import save_historico_to_db
+from modules.omega_logic import calculate_and_save_frequencies
 print("--- Módulos locales importados ---")
 # --- INICIALIZACIÓN DE LA APP ---
 app = dash.Dash(
@@ -96,6 +97,30 @@ def handle_historical_load(n_clicks):
         className="d-flex align-items-center"
     )
     return alert
+
+@app.callback(
+    Output("config-feedback-message", "children", allow_duplicate=True),
+    Input("btn-gen-omega", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_omega_class_generation(n_clicks):
+    success, message = calculate_and_save_frequencies()
+    
+    if success:
+        alert = dbc.Alert(
+            [html.I(className="fa-solid fa-check-circle me-2"), message],
+            color="success",
+            className="d-flex align-items-center"
+        )
+    else:
+        alert = dbc.Alert(
+            [html.I(className="fa-solid fa-triangle-exclamation me-2"), message],
+            color="danger",
+            className="d-flex align-items-center"
+        )
+    
+    return alert
+
 
 print("--- Callbacks registrados ---")
 # --- PUNTO DE ENTRADA ---
