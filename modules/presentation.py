@@ -75,9 +75,23 @@ def create_configuracion_view():
     """Crea la vista de la pestaña 'Configuración'."""
     return html.Div([
         html.H3("Configuración", className="text-center text-dark mb-4"),
+        
+        # --- LÍNEA FALTANTE AÑADIDA AQUÍ ---
+        # Este es el contenedor donde se mostrará el mensaje de éxito o error.
+        html.Div(id="config-feedback-message", className="text-center mb-4"),
+        # ------------------------------------
+
         dbc.Row([
-            dbc.Col(dbc.Button("Generar Histórico", id="btn-gen-historico", color="secondary", className="action-button"), width="auto"),
-            dbc.Col(dbc.Button("Generar Clase Omega", id="btn-gen-omega", color="secondary", className="action-button"), width="auto"),
+            # He envuelto cada botón en su propio dbc.Col como estaba en el diseño original,
+            # lo que ayuda con la alineación y el espaciado.
+            dbc.Col(
+                dbc.Button("Generar Histórico", id="btn-gen-historico", color="secondary", className="action-button"), 
+                width="auto"
+            ),
+            dbc.Col(
+                dbc.Button("Generar Clase Omega", id="btn-gen-omega", color="secondary", className="action-button"), 
+                width="auto"
+            ),
         ], justify="center", className="g-2")
     ])
 
