@@ -20,7 +20,6 @@ def create_navigation():
     """Crea la barra de navegación con estilo de píldora."""
     return dbc.Row(
         dbc.Col(
-            # Div contenedor que crea el fondo de la píldora
             html.Div(
                 dbc.ButtonGroup(
                     [
@@ -40,12 +39,9 @@ def create_navigation():
     )
 
 def create_generador_view():
-    """Crea la vista de 'Generador Omega' con el diseño final."""
+    """Crea la vista de 'Generador Omega' con el diseño final y homologado."""
     number_inputs = [
-        dbc.Col(
-            dcc.Input(id=f"num-input-{i}", type="number", className="number-box"),
-            width="auto",
-        )
+        dbc.Col(dcc.Input(id=f"num-input-{i}", type="number", className="number-box"), width="auto")
         for i in range(6)
     ]
 
@@ -54,21 +50,21 @@ def create_generador_view():
         dbc.Row([
             dbc.Col(html.P("ANALIZAR", className="analizar-text"), width="auto"),
             dbc.Col(
-                dbc.Button("GENERAR OMEGA", id="btn-generar", color="dark", className="action-pill-button"),
+                dbc.Button("GENERAR OMEGA", id="btn-generar", color="dark", className="action-button"),
                 width="auto"
             ),
         ], justify="center", align="center", className="g-3 mb-4"),
         dbc.Row(
             dbc.Col(
                 dcc.Input(id="input-nombre", placeholder="Nombre Completo", className="form-control"),
-                width=6, md=5, lg=4
+                width=8, md=6, lg=5, xl=4 # Ajuste para centrar y limitar ancho
             ),
             justify="center",
             className="mb-4"
         ),
         dbc.Row(
             dbc.Col(
-                dbc.Button("REGISTRAR OMEGA", id="btn-registrar", color="dark", outline=True, className="action-pill-button"),
+                dbc.Button("REGISTRAR OMEGA", id="btn-registrar", color="dark", outline=True, className="action-button"),
                 width="auto"
             ),
             justify="center"
@@ -80,8 +76,8 @@ def create_configuracion_view():
     return html.Div([
         html.H3("Configuración", className="text-center text-dark mb-4"),
         dbc.Row([
-            dbc.Col(dbc.Button("Generar Histórico", id="btn-gen-historico", color="secondary", className="action-pill-button"), width="auto"),
-            dbc.Col(dbc.Button("Generar Clase Omega", id="btn-gen-omega", color="secondary", className="action-pill-button"), width="auto"),
+            dbc.Col(dbc.Button("Generar Histórico", id="btn-gen-historico", color="secondary", className="action-button"), width="auto"),
+            dbc.Col(dbc.Button("Generar Clase Omega", id="btn-gen-omega", color="secondary", className="action-button"), width="auto"),
         ], justify="center", className="g-2")
     ])
 
