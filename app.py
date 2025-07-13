@@ -1,43 +1,61 @@
-print("--- Ejecutando app.py ---")
+import time
+start_total = time.perf_counter()
 
+import logging
+from utils.logger_config import setup_logger
+
+setup_logger()
+logger = logging.getLogger(__name__)
+
+logger.info("="*50)
+logger.info("INICIO DE LA APLICACIÓN ZEN LOTTO (MODO LAZY-IMPORT)")
+logger.info("="*50)
+
+start_imports = time.perf_counter()
+logger.info("Importando librerías esenciales (Dash)...")
 import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc, Input, Output, ctx
+# ¡NOTA! Ya no importamos nuestros módulos aquí.
+end_imports = time.perf_counter()
+logger.info(f"--- TIEMPO DE IMPORTS ESENCIALES: {end_imports - start_imports:.4f} segundos ---")
 
-print("--- Importando módulos locales ---")
-# --- IMPORTACIONES ---
-from modules.data_ingestion import run_historical_load
-from modules.presentation import create_layout, create_generador_view, create_configuracion_view
-from modules.database import save_historico_to_db
-from modules.omega_logic import calculate_and_save_frequencies
-print("--- Módulos locales importados ---")
 # --- INICIALIZACIÓN DE LA APP ---
+logger.info("Inicializando la aplicación Dash...")
 app = dash.Dash(
     __name__, 
     external_stylesheets=[dbc.themes.LUX, dbc.icons.FONT_AWESOME],
-    suppress_callback_exceptions=True # Corrección para manejar layouts dinámicos
+    suppress_callback_exceptions=True
 )
 server = app.server
+logger.info("Aplicación Dash inicializada.")
 
-# --- LAYOUT DE LA APLICACIÓN ---
+# --- LAYOUT ---
+# Necesitamos importar solo el módulo de presentación aquí.
+# Esto debería ser rápido, ya que presentation.py no importa pandas.
+from modules.presentation import create_layout
+logger.info("Creando el layout de la aplicación...")
 app.layout = create_layout()
+logger.info("Layout creado.")
 
 # --- CALLBACKS ---
-print("--- Registrando callbacks ---")
+logger.info("Registrando callbacks de la aplicación...")
 
-# Callback para actualizar el contenido de la vista principal
 @app.callback(
     Output("view-content", "children"),
     Input("btn-nav-generador", "n_clicks"),
     Input("btn-nav-configuracion", "n_clicks"),
 )
 def render_view_content(gen_clicks, conf_clicks):
+    from modules.presentation import create_generador_view, create_configuracion_view
+    
     triggered_id = ctx.triggered_id or "btn-nav-generador"
+    logger.info(f"Callback 'render_view_content' disparado por: {triggered_id}")
     if triggered_id == "btn-nav-configuracion":
         return create_configuracion_view()
     return create_generador_view()
 
-# Callback para gestionar el estilo "active" de los botones de navegación
+# ... (El callback de los estilos de navegación no cambia) ...
 @app.callback(
     Output("btn-nav-generador", "className"),
     Output("btn-nav-configuracion", "className"),
@@ -49,54 +67,36 @@ def update_nav_buttons_style(gen_clicks, conf_clicks):
     base_class = "nav-button"
     gen_class = base_class
     conf_class = base_class
-    
-    if triggered_id == "btn-nav-generador":
-        gen_class += " active"
-    elif triggered_id == "btn-nav-configuracion":
-        conf_class += " active"
-        
+    if triggered_id == "btn-nav-generador": gen_class += " active"
+    elif triggered_id == "btn-nav-configuracion": conf_class += " active"
     return gen_class, conf_class
 
 
-# Callback para el botón de carga de histórico
 @app.callback(
     Output("config-feedback-message", "children"),
     Input("btn-gen-historico", "n_clicks"),
-    prevent_initial_call=True  # Evita que se ejecute al cargar la página
+    prevent_initial_call=True
 )
 def handle_historical_load(n_clicks):
-    # 1. Cargar datos desde el CSV
-    df, load_message, load_success = run_historical_load()
+    # --- IMPORTACIONES PEREZOSAS ---
+    from modules.data_ingestion import run_historical_load
+    from modules.database import save_historico_to_db, get_last_concurso_from_db
+    # -----------------------------
+    
+    logger.info("Callback 'handle_historical_load' disparado.")
+    last_concurso_in_db = get_last_concurso_from_db()
+    df_new, _, load_success = run_historical_load(last_concurso=last_concurso_in_db)
     
     if not load_success:
-        # Si la carga falla, muestra el error y termina
-        alert = dbc.Alert(
-            [html.I(className="fa-solid fa-triangle-exclamation me-2"), load_message],
-            color="danger",
-            className="d-flex align-items-center"
-        )
-        return alert
+        return dbc.Alert("Error durante la carga de datos. Revise los logs.", color="danger")
 
-    # 2. Guardar el DataFrame en la base de datos
-    save_success, save_message = save_historico_to_db(df)
+    save_mode = 'append'
+    save_success, save_message = save_historico_to_db(df_new, mode=save_mode)
 
     if not save_success:
-        # Si el guardado falla, muestra el error
-        alert = dbc.Alert(
-            [html.I(className="fa-solid fa-triangle-exclamation me-2"), save_message],
-            color="danger",
-            className="d-flex align-items-center"
-        )
-        return alert
-
-    # 3. Si todo fue exitoso, muestra un mensaje combinado
-    final_message = f"{load_message} {save_message}"
-    alert = dbc.Alert(
-        [html.I(className="fa-solid fa-check-circle me-2"), final_message],
-        color="success",
-        className="d-flex align-items-center"
-    )
-    return alert
+        return dbc.Alert(save_message, color="danger")
+    
+    return dbc.Alert(save_message, color="success")
 
 @app.callback(
     Output("config-feedback-message", "children", allow_duplicate=True),
@@ -104,25 +104,21 @@ def handle_historical_load(n_clicks):
     prevent_initial_call=True
 )
 def handle_omega_class_generation(n_clicks):
+    # --- IMPORTACIÓN PEREZOSA ---
+    from modules.omega_logic import calculate_and_save_frequencies
+    # --------------------------
+
+    logger.info("Callback 'handle_omega_class_generation' disparado.")
     success, message = calculate_and_save_frequencies()
-    
-    if success:
-        alert = dbc.Alert(
-            [html.I(className="fa-solid fa-check-circle me-2"), message],
-            color="success",
-            className="d-flex align-items-center"
-        )
-    else:
-        alert = dbc.Alert(
-            [html.I(className="fa-solid fa-triangle-exclamation me-2"), message],
-            color="danger",
-            className="d-flex align-items-center"
-        )
-    
-    return alert
+    color = "success" if success else "danger"
+    return dbc.Alert(message, color=color)
 
+logger.info("Callbacks registrados.")
+end_total = time.perf_counter()
+logger.info(f"--- TIEMPO TOTAL DE ARRANQUE DEL SCRIPT: {end_total - start_total:.4f} segundos ---")
 
-print("--- Callbacks registrados ---")
 # --- PUNTO DE ENTRADA ---
 if __name__ == "__main__":
-    app.run(debug=True)
+    logger.info("Iniciando servidor de desarrollo de Dash.")
+    # Intenta deshabilitar el reloader para confirmar la teoría
+    app.run(debug=True, port=8050, use_reloader=False)

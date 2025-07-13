@@ -1,29 +1,27 @@
 import pandas as pd
+import logging
 import config
 
-def run_historical_load():
+logger = logging.getLogger(__name__)
+
+def run_historical_load(last_concurso=0):
     """
-    Descarga el archivo CSV con el histórico de sorteos, lo valida,
-    lo limpia y lo devuelve en un formato estandarizado.
+    Descarga, valida y limpia el histórico. Si se provee last_concurso,
+    filtra para devolver solo los sorteos más nuevos.
     """
     try:
-        # Usamos parse_dates para que pandas intente convertir la columna 'FECHA' a datetime
-        # y dayfirst=True para que interprete formatos como 'dd/mm/yyyy' correctamente.
+        logger.info(f"Iniciando descarga de datos desde {config.HISTORICAL_DATA_URL}")
         df = pd.read_csv(config.HISTORICAL_DATA_URL, parse_dates=['FECHA'], dayfirst=True)
+        logger.info("Descarga completada.")
 
-        # 1. Validación: Verificar que las columnas que necesitamos existan.
         if not all(col in df.columns for col in config.EXPECTED_COLUMNS):
             missing = set(config.EXPECTED_COLUMNS) - set(df.columns)
-            return (
-                None, 
-                f"Error de validación: Faltan las columnas {missing} en el archivo CSV.",
-                False
-            )
+            message = f"Error de validación: Faltan las columnas {missing} en el archivo CSV."
+            logger.error(message)
+            return None, message, False
         
-        # 2. Selección de columnas: Nos quedamos solo con las que nos interesan.
         df = df[config.EXPECTED_COLUMNS]
 
-        # 3. Mapeo/Renombrado de columnas: Estandarizamos los nombres.
         column_mapping = {
             'CONCURSO': 'concurso',
             'F1': 'r1', 'F2': 'r2', 'F3': 'r3', 
@@ -33,31 +31,31 @@ def run_historical_load():
         }
         df.rename(columns=column_mapping, inplace=True)
         
-        # 4. Limpieza y conversión de tipos.
+        if last_concurso > 0:
+            df = df[df['concurso'] > last_concurso].copy()
+            logger.info(f"Filtrado aplicado. Se encontraron {len(df)} sorteos nuevos desde el concurso {last_concurso}.")
+
         result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
         initial_rows = len(df)
         
-        # Eliminamos filas con nulos en las columnas de resultados
         df.dropna(subset=result_columns, inplace=True)
         
-        # Convertimos columnas de resultados a enteros
         for col in result_columns:
             df[col] = df[col].astype(int)
             
-        # Convertimos la bolsa a numérico, manejando errores (si algo no es un número)
-        # 'coerce' convertirá los valores no numéricos en NaT (Not a Time), que luego podemos manejar.
         df['bolsa'] = pd.to_numeric(df['bolsa'], errors='coerce')
-        df.dropna(subset=['bolsa'], inplace=True) # Eliminamos filas donde la bolsa no era un número
+        df.dropna(subset=['bolsa'], inplace=True)
         df['bolsa'] = df['bolsa'].astype(int)
-
 
         cleaned_rows = len(df)
         message = (
-            f"Carga exitosa. Se han procesado y validado {cleaned_rows} sorteos. "
+            f"Carga y procesamiento exitoso. Se procesaron {cleaned_rows} sorteos. "
             f"({initial_rows - cleaned_rows} filas con datos incompletos fueron descartadas)."
         )
+        logger.info(message)
         return df, message, True
 
     except Exception as e:
-        error_message = f"Error al descargar o procesar el histórico: {e}"
+        error_message = f"Error crítico durante la ingestión de datos: {e}"
+        logger.error(error_message, exc_info=True)
         return None, error_message, False
