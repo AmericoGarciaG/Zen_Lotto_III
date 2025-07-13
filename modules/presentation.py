@@ -59,14 +59,19 @@ def create_configuracion_view():
         html.Div(id="config-feedback-message", className="text-center mb-4"),
         dbc.Row([
             dbc.Col(
-                dbc.Button("Generar Histórico", id="btn-gen-historico", color="secondary", className="action-button"), 
+                dbc.Button("Actualizar Histórico", id="btn-gen-historico", color="secondary", className="action-button"), 
                 width="auto"
             ),
             dbc.Col(
-                dbc.Button("Generar Clase Omega", id="btn-gen-omega", color="secondary", className="action-button"), 
+                dbc.Button("Actualizar Frecuencias", id="btn-gen-omega", color="secondary", className="action-button"), 
                 width="auto"
             ),
-        ], justify="center", className="g-2")
+            # --- NUEVO BOTÓN ---
+            dbc.Col(
+                dbc.Button("Pre-generar Clase Omega", id="btn-pregen-omega", color="primary", className="action-button"), 
+                width="auto"
+            ),
+        ], justify="center", className="g-3") # Usamos g-3 para más espacio
     ])
 
 def create_layout():
@@ -79,3 +84,4 @@ def create_layout():
         fluid=False,
         className="main-container",
     )
+

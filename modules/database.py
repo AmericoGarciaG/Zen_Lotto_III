@@ -5,7 +5,8 @@ import config
 
 logger = logging.getLogger(__name__)
 
-TABLE_NAME = "historico"
+TABLE_NAME_HISTORICO = "historico" # Renombramos para claridad
+TABLE_NAME_OMEGA = "omega_class"   # Nueva tabla
 
 def save_historico_to_db(df, mode='replace'):
     """
@@ -18,7 +19,7 @@ def save_historico_to_db(df, mode='replace'):
 
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        df.to_sql(TABLE_NAME, conn, if_exists=mode, index=False)
+        df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
         conn.close()
         
         action = "guardaron" if mode == 'replace' else "añadieron"
@@ -37,11 +38,11 @@ def read_historico_from_db():
     """
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        df = pd.read_sql_query(f"SELECT * FROM {TABLE_NAME}", conn, parse_dates=['fecha'])
+        df = pd.read_sql_query(f"SELECT * FROM {TABLE_NAME_HISTORICO}", conn, parse_dates=['fecha'])
         conn.close()
         return df
     except sqlite3.OperationalError:
-        logger.warning(f"La tabla '{TABLE_NAME}' no existe en la base de datos. Se retornará None.")
+        logger.warning(f"La tabla '{TABLE_NAME_HISTORICO}' no existe en la base de datos. Se retornará None.")
         return None
     except Exception as e:
         logger.error(f"Error al leer desde la base de datos: {e}", exc_info=True)
@@ -55,7 +56,7 @@ def get_last_concurso_from_db():
     try:
         conn = sqlite3.connect(config.DB_FILE)
         cursor = conn.cursor()
-        cursor.execute(f"SELECT MAX(concurso) FROM {TABLE_NAME}")
+        cursor.execute(f"SELECT MAX(concurso) FROM {TABLE_NAME_HISTORICO}")
         last_concurso = cursor.fetchone()[0]
         conn.close()
         
@@ -65,7 +66,7 @@ def get_last_concurso_from_db():
         return last_concurso
         
     except sqlite3.OperationalError:
-        logger.warning(f"La tabla '{TABLE_NAME}' no existe. Se asume que el último concurso es 0.")
+        logger.warning(f"La tabla '{TABLE_NAME_HISTORICO}' no existe. Se asume que el último concurso es 0.")
         if conn:
             conn.close()
         return 0
@@ -74,3 +75,34 @@ def get_last_concurso_from_db():
         if conn:
             conn.close()
         return 0
+    
+def save_omega_class(omega_combinations_df):
+    """
+    Guarda un DataFrame de combinaciones Omega en la base de datos.
+    Reemplaza la tabla por completo si ya existe.
+
+    Args:
+        omega_combinations_df (pd.DataFrame): DataFrame con las combinaciones Omega.
+
+    Returns:
+        tuple: (bool, str) - Éxito y mensaje.
+    """
+    if omega_combinations_df.empty:
+        message = "No se encontraron combinaciones Omega para guardar."
+        logger.warning(message)
+        return False, message
+
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        # Guardamos el DataFrame en la nueva tabla.
+        omega_combinations_df.to_sql(TABLE_NAME_OMEGA, conn, if_exists='replace', index=False)
+        conn.close()
+        
+        message = f"Pre-generación completada. Se guardaron {len(omega_combinations_df)} combinaciones Omega en la tabla '{TABLE_NAME_OMEGA}'."
+        logger.info(message)
+        return True, message
+
+    except Exception as e:
+        message = f"Error al guardar la Clase Omega en la base de datos: {e}"
+        logger.error(message, exc_info=True)
+        return False, message

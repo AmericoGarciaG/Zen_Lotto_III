@@ -9,3 +9,8 @@ EXPECTED_COLUMNS = ['CONCURSO', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'BOLSA', 'FE
 DB_FILE = "zen_lotto.db"
 # Archivo de frecuencias
 FREQUENCIES_FILE = "frecuencias.json"
+
+# Umbrales para la clasificación Omega
+UMBRAL_PARES = 459
+UMBRAL_TERCIAS = 74
+UMBRAL_CUARTETOS = 10

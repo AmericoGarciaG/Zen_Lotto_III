@@ -117,6 +117,29 @@ logger.info("Callbacks registrados.")
 end_total = time.perf_counter()
 logger.info(f"--- TIEMPO TOTAL DE ARRANQUE DEL SCRIPT: {end_total - start_total:.4f} segundos ---")
 
+@app.callback(
+    Output("config-feedback-message", "children", allow_duplicate=True),
+    Input("btn-pregen-omega", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_pregenerate_omega(n_clicks):
+    # --- IMPORTACIÓN PEREZOSA ---
+    from modules.omega_logic import pregenerate_omega_class
+    
+    logger.info("Callback 'handle_pregenerate_omega' disparado.")
+    
+    # Este proceso es largo, el feedback al usuario es crucial
+    # (En una app real, usaríamos un componente de carga/spinner)
+    start_time = time.time()
+    success, message = pregenerate_omega_class()
+    end_time = time.time()
+
+    total_time = end_time - start_time
+    full_message = f"{message} (Tiempo de ejecución: {total_time:.2f} segundos)"
+
+    color = "success" if success else "danger"
+    return dbc.Alert(full_message, color=color)
+
 # --- PUNTO DE ENTRADA ---
 if __name__ == "__main__":
     logger.info("Iniciando servidor de desarrollo de Dash.")
