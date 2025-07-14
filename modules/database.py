@@ -81,17 +81,15 @@ def save_omega_class(omega_combinations_df):
     
 def get_random_omega_combination():
     """
-    Selecciona una combinación aleatoria de la tabla 'omega_class'.
-
-    Returns:
-        list: Una lista de 6 números de la combinación, o None si hay un error.
+    Selecciona una combinación aleatoria INÉDITA (ha_salido=0) de la tabla 'omega_class'.
     """
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        # SQL para seleccionar una fila aleatoria.
-        # ORDER BY RANDOM() es eficiente para tamaños de tabla moderados como el nuestro.
-        query = f"SELECT c1, c2, c3, c4, c5, c6 FROM {TABLE_NAME_OMEGA} ORDER BY RANDOM() LIMIT 1"
+        # --- CONSULTA MODIFICADA ---
+        # Añadimos la condición WHERE para filtrar solo las que no han salido
+        query = f"SELECT c1, c2, c3, c4, c5, c6 FROM {TABLE_NAME_OMEGA} WHERE ha_salido = 0 ORDER BY RANDOM() LIMIT 1"
+        # -------------------------
         cursor = conn.cursor()
         cursor.execute(query)
         
@@ -99,20 +97,17 @@ def get_random_omega_combination():
         conn.close()
         
         if row:
-            # row será una tupla, la convertimos a lista
-            logger.info(f"Combinación Omega aleatoria obtenida de la BD: {list(row)}")
+            logger.info(f"Combinación Omega aleatoria INÉDITA obtenida de la BD: {list(row)}")
             return list(row)
         else:
-            logger.warning("La tabla 'omega_class' está vacía o no se pudo obtener una fila.")
+            logger.warning("No se encontró ninguna combinación Omega INÉDITA disponible.")
             return None
 
     except sqlite3.OperationalError:
         logger.error(f"La tabla '{TABLE_NAME_OMEGA}' no existe. Debe ser pre-generada primero.", exc_info=True)
-        if conn:
-            conn.close()
+        if conn: conn.close()
         return None
     except Exception as e:
         logger.error(f"Error al obtener una combinación Omega aleatoria: {e}", exc_info=True)
-        if conn:
-            conn.close()
+        if conn: conn.close()
         return None

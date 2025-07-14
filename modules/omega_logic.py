@@ -164,10 +164,10 @@ def calculate_and_save_frequencies():
 
 def pregenerate_omega_class():
     """
-    Pre-genera la Clase Omega usando el estado centralizado para verificar si es necesario.
+    Pre-genera la Clase Omega, evaluando todas las combinaciones y marcando
+    aquellas que ya han aparecido en el histórico de sorteos.
     """
     logger.info("Verificando si la pre-generación de Clase Omega es necesaria...")
-    
     state = state_manager.get_state()
     last_concurso_for_freqs = state.get("last_concurso_for_freqs", 0)
     last_concurso_for_omega = state.get("last_concurso_for_omega_class", 0)
@@ -176,22 +176,36 @@ def pregenerate_omega_class():
         return False, "Las frecuencias no han sido generadas. Por favor, actualícelas primero."
     
     if last_concurso_for_freqs == last_concurso_for_omega:
-        message = "La Clase Omega ya está actualizada con las últimas frecuencias. No es necesario re-generar."
-        logger.info(message)
-        return True, message
+        return True, "La Clase Omega ya está actualizada con las últimas frecuencias. No es necesario re-generar."
 
     logger.info("Iniciando la pre-generación. Esto puede tardar varios minutos...")
     freqs = get_frequencies()
     if freqs is None:
         return False, "No se pueden generar combinaciones Omega sin un archivo de frecuencias."
 
+    # --- INICIO DE LA MEJORA (MÉTODO 3) ---
+    
+    # 1. Cargar el histórico de sorteos en un set para búsqueda rápida.
+    df_historico = db.read_historico_from_db()
+    if df_historico is None:
+        return False, "No se pudo leer el histórico de la base de datos."
+        
+    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+    # Creamos un set de tuplas ordenadas para una búsqueda O(1)
+    historical_draws_set = set(
+        tuple(sorted(row)) for row in df_historico[result_columns].to_numpy()
+    )
+    logger.info(f"Se cargaron {len(historical_draws_set)} sorteos históricos en memoria para la verificación.")
+
+    # --- FIN DE LA MEJORA ---
+
     omega_list = []
     total_combinations = C(39, 6)
     logger.info(f"Se evaluarán {total_combinations:,} combinaciones en total.")
 
     all_possible_combinations = combinations(range(1, 40), 6)
-
     count = 0
+    
     for combo in all_possible_combinations:
         count += 1
         if count % 200000 == 0:
@@ -200,9 +214,15 @@ def pregenerate_omega_class():
         result = evaluate_combination(list(combo), freqs)
         
         if result.get("esOmega"):
+            # --- INICIO DE LA MEJORA (MÉTODO 3) ---
+            # 2. Verificar si la combinación Omega ya salió
+            ha_salido = 1 if combo in historical_draws_set else 0
+            # --- FIN DE LA MEJORA ---
+
             omega_list.append({
                 'c1': combo[0], 'c2': combo[1], 'c3': combo[2],
                 'c4': combo[3], 'c5': combo[4], 'c6': combo[5],
+                'ha_salido': ha_salido, # <-- NUEVA COLUMNA
                 'afinidad_pares': result['afinidadPares'],
                 'afinidad_tercias': result['afinidadTercias'],
                 'afinidad_cuartetos': result['afinidadCuartetos'],
@@ -216,7 +236,6 @@ def pregenerate_omega_class():
     success, message = db.save_omega_class(omega_df)
     
     if success:
-        # Actualizamos el estado central al finalizar con éxito
         state["last_concurso_for_omega_class"] = last_concurso_for_freqs
         state_manager.save_state(state)
         
