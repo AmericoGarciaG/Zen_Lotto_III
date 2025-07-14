@@ -47,7 +47,7 @@ def create_generador_view():
                 width="auto"
             ),
             dbc.Col(
-                dbc.Button("GENERAR OMEGA", id="btn-generar", color="dark", className="action-button"), 
+                dbc.Button("GENERAR OMEGA / AJUSTAR", id="btn-generar", color="dark", className="action-button"), 
                 width="auto"
             ),
         ], justify="center", align="center", className="g-3 mb-4"),

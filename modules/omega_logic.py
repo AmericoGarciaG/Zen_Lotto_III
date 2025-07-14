@@ -240,3 +240,21 @@ def pregenerate_omega_class():
         state_manager.save_state(state)
         
     return success, message
+
+def adjust_to_omega(user_combo):
+    """
+    Busca la combinación Omega inédita más cercana a la del usuario,
+    priorizando la menor cantidad de cambios.
+    """
+    logger.info(f"Iniciando ajuste para la combinación: {user_combo}")
+    
+    # Búsqueda jerárquica de 5 coincidencias hacia abajo
+    for matches in range(5, 2, -1): # Busca para 5, 4 y 3 coincidencias
+        logger.info(f"Buscando combinación Omega con {matches} coincidencias...")
+        closest_combo = db.find_closest_omega(user_combo, matches)
+        if closest_combo:
+            logger.info(f"Encontrada combinación de ajuste con {matches} coincidencias: {closest_combo}")
+            return closest_combo, matches # Devolvemos la combinación y cuántos números se mantuvieron
+            
+    logger.warning(f"No se encontró ninguna combinación de ajuste razonable para {user_combo}.")
+    return None, 0

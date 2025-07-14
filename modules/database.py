@@ -111,3 +111,46 @@ def get_random_omega_combination():
         logger.error(f"Error al obtener una combinación Omega aleatoria: {e}", exc_info=True)
         if conn: conn.close()
         return None
+    
+# modules/database.py
+
+def find_closest_omega(user_combo, match_count):
+    """
+    Busca en la BD una combinación Omega aleatoria que tenga exactamente
+    'match_count' números en común con la combinación del usuario.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        # SQLite no tiene un 'IN' para tuplas, así que lo formateamos directamente.
+        # Es seguro porque sabemos que user_combo es una lista de números.
+        user_combo_str = ", ".join(map(str, user_combo))
+        
+        # Esta consulta cuenta cuántas columnas (c1 a c6) están en la lista de números del usuario.
+        query = f"""
+            SELECT c1, c2, c3, c4, c5, c6
+            FROM {TABLE_NAME_OMEGA}
+            WHERE 
+                (CASE WHEN c1 IN ({user_combo_str}) THEN 1 ELSE 0 END +
+                 CASE WHEN c2 IN ({user_combo_str}) THEN 1 ELSE 0 END +
+                 CASE WHEN c3 IN ({user_combo_str}) THEN 1 ELSE 0 END +
+                 CASE WHEN c4 IN ({user_combo_str}) THEN 1 ELSE 0 END +
+                 CASE WHEN c5 IN ({user_combo_str}) THEN 1 ELSE 0 END +
+                 CASE WHEN c6 IN ({user_combo_str}) THEN 1 ELSE 0 END) = ?
+            AND ha_salido = 0
+            ORDER BY RANDOM()
+            LIMIT 1
+        """
+        cursor = conn.cursor()
+        # Pasamos match_count como un parámetro seguro a la consulta
+        cursor.execute(query, (match_count,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        return list(row) if row else None
+
+    except Exception as e:
+        logger.error(f"Error al buscar la combinación más cercana: {e}", exc_info=True)
+        if conn: conn.close()
+        return None

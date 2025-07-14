@@ -120,24 +120,83 @@ def handle_pregenerate_omega(n_clicks):
     color = "success" if success else "danger"
     return dbc.Alert(full_message, color=color, duration=10000)
 
-# --- Callbacks del Generador ---
+# --- CALLBACK PARA EL BOTÓN "GENERAR OMEGA / AJUSTAR" ---
 @app.callback(
     [Output(f"num-input-{i}", "value") for i in range(6)] + 
     [Output("notification-container", "children", allow_duplicate=True)],
     Input("btn-generar", "n_clicks"),
+    [State(f"num-input-{i}", "value") for i in range(6)], # Leemos el estado de los inputs
     prevent_initial_call=True
 )
-def handle_generate_omega(n_clicks):
-    if not fue_un_clic_real('btn-generar'): return [no_update] * 7
+def handle_generate_omega(n_clicks, *num_inputs):
+    # Primero, la guarda de seguridad para evitar disparos automáticos
+    if not fue_un_clic_real('btn-generar'):
+        return [no_update] * 7
+
+    # Importaciones perezosas
     from modules.database import get_random_omega_combination
-    logger.info("Callback 'handle_generate_omega' disparado por clic real.")
-    omega_combination = get_random_omega_combination()
-    if omega_combination:
-        return omega_combination + [None]
+    from modules.omega_logic import evaluate_combination, adjust_to_omega, get_frequencies
+
+    logger.info(f"Callback 'GENERAR/AJUSTAR' disparado. Inputs: {num_inputs}")
+
+    # --- Lógica Condicional Principal ---
+
+    # Escenario 1: Los recuadros están vacíos. Generar una combinación Omega aleatoria.
+    if all(num is None or num == '' for num in num_inputs):
+        logger.info("Modo: Generación aleatoria (inputs vacíos).")
+        omega_combination = get_random_omega_combination()
+        if omega_combination:
+            return omega_combination + [None] # Combinación + sin mensaje
+        else:
+            error_msg = dbc.Alert("Error: No se pudo generar una combinación. ¿Falta pre-generar la Clase Omega?", color="warning", duration=5000)
+            return [no_update] * 6 + [error_msg]
+
+    # Escenario 2: Los recuadros tienen números. Intentar analizar y ajustar.
     else:
-        logger.warning("No se pudo generar combinación. ¿Falta pre-generar Clase Omega?")
-        error_message = dbc.Alert("Error: La Clase Omega no ha sido generada. Ve a Configuración y ejecútala.", color="warning", duration=5000)
-        return [no_update] * 6 + [error_message]
+        logger.info("Modo: Análisis y ajuste (inputs con datos).")
+        
+        # 2.1. Validar la estructura de la combinación del usuario
+        if any(num is None or num == '' for num in num_inputs):
+            return [no_update] * 6 + [dbc.Alert("Por favor, ingrese 6 números para ajustar.", color="warning", duration=4000)]
+        try:
+            user_combo = [int(num) for num in num_inputs]
+            if len(set(user_combo)) != 6:
+                return [no_update] * 6 + [dbc.Alert("Los 6 números deben ser únicos para ajustar.", color="warning", duration=4000)]
+        except (ValueError, TypeError):
+            return [no_update] * 6 + [dbc.Alert("Por favor, ingrese solo números válidos para ajustar.", color="warning", duration=4000)]
+
+        # 2.2. Evaluar si la combinación ya es Omega
+        freqs = get_frequencies()
+        if freqs is None:
+            return [no_update] * 6 + [dbc.Alert("Error: Frecuencias no generadas. Ve a Configuración.", color="danger")]
+            
+        eval_result = evaluate_combination(user_combo, freqs)
+        if eval_result.get("esOmega"):
+            success_msg = dbc.Alert(f"¡Tu combinación {user_combo} ya es de Clase Omega! No necesita ajuste.", color="success", duration=6000)
+            return [no_update] * 6 + [success_msg]
+
+        # 2.3. Si no es Omega, buscar el ajuste
+        logger.info(f"La combinación {user_combo} no es Omega. Buscando ajuste...")
+        adjusted_combo, matches = adjust_to_omega(user_combo)
+        
+        if adjusted_combo:
+            # Creamos un mensaje informativo para el usuario
+            changed_numbers = 6 - matches
+            ajuste_msg = dbc.Alert(
+                f"¡Combinación ajustada! Se mantuvieron {matches} de tus números y se cambiaron {changed_numbers} para que sea Omega.",
+                color="info",
+                duration=8000
+            )
+            # Devolvemos la nueva combinación y el mensaje
+            return adjusted_combo + [ajuste_msg]
+        else:
+            # Si no se encontró ningún ajuste razonable
+            no_ajuste_msg = dbc.Alert(
+                f"No se encontró un ajuste cercano para tu combinación. Intenta con otros números o genera una aleatoria.",
+                color="danger",
+                duration=8000
+            )
+            return [no_update] * 6 + [no_ajuste_msg]
 
 # --- BLOQUE REINTRODUCIDO Y CORREGIDO ---
 @app.callback(
