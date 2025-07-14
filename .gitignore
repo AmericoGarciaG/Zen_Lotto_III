@@ -1,3 +1,4 @@
 modules/.gitignore
 __pycache__/config.cpython-313.pyc
 utils/__pycache__/logger_config.cpython-313.pyc
+utils/__pycache__/state_manager.cpython-313.pyc

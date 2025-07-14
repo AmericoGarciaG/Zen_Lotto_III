@@ -47,34 +47,6 @@ def read_historico_from_db():
     except Exception as e:
         logger.error(f"Error al leer desde la base de datos: {e}", exc_info=True)
         return None
-
-def get_last_concurso_from_db():
-    """
-    Obtiene el número del concurso más reciente almacenado en la base de datos.
-    """
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT MAX(concurso) FROM {TABLE_NAME_HISTORICO}")
-        last_concurso = cursor.fetchone()[0]
-        conn.close()
-        
-        # Si la tabla está vacía, last_concurso será None. Lo convertimos a 0.
-        last_concurso = last_concurso if last_concurso is not None else 0
-        logger.info(f"Último concurso encontrado en la BD: {last_concurso}")
-        return last_concurso
-        
-    except sqlite3.OperationalError:
-        logger.warning(f"La tabla '{TABLE_NAME_HISTORICO}' no existe. Se asume que el último concurso es 0.")
-        if conn:
-            conn.close()
-        return 0
-    except Exception as e:
-        logger.error(f"Error al obtener el último concurso: {e}", exc_info=True)
-        if conn:
-            conn.close()
-        return 0
     
 def save_omega_class(omega_combinations_df):
     """
@@ -106,3 +78,41 @@ def save_omega_class(omega_combinations_df):
         message = f"Error al guardar la Clase Omega en la base de datos: {e}"
         logger.error(message, exc_info=True)
         return False, message
+    
+def get_random_omega_combination():
+    """
+    Selecciona una combinación aleatoria de la tabla 'omega_class'.
+
+    Returns:
+        list: Una lista de 6 números de la combinación, o None si hay un error.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        # SQL para seleccionar una fila aleatoria.
+        # ORDER BY RANDOM() es eficiente para tamaños de tabla moderados como el nuestro.
+        query = f"SELECT c1, c2, c3, c4, c5, c6 FROM {TABLE_NAME_OMEGA} ORDER BY RANDOM() LIMIT 1"
+        cursor = conn.cursor()
+        cursor.execute(query)
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            # row será una tupla, la convertimos a lista
+            logger.info(f"Combinación Omega aleatoria obtenida de la BD: {list(row)}")
+            return list(row)
+        else:
+            logger.warning("La tabla 'omega_class' está vacía o no se pudo obtener una fila.")
+            return None
+
+    except sqlite3.OperationalError:
+        logger.error(f"La tabla '{TABLE_NAME_OMEGA}' no existe. Debe ser pre-generada primero.", exc_info=True)
+        if conn:
+            conn.close()
+        return None
+    except Exception as e:
+        logger.error(f"Error al obtener una combinación Omega aleatoria: {e}", exc_info=True)
+        if conn:
+            conn.close()
+        return None

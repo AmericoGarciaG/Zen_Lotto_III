@@ -14,3 +14,6 @@ FREQUENCIES_FILE = "frecuencias.json"
 UMBRAL_PARES = 459
 UMBRAL_TERCIAS = 74
 UMBRAL_CUARTETOS = 10
+
+# Archivo de estado central
+STATE_FILE = "system_state.json"
