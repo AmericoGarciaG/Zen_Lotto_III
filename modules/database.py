@@ -7,19 +7,39 @@ logger = logging.getLogger(__name__)
 
 TABLE_NAME_HISTORICO = "historico" # Renombramos para claridad
 TABLE_NAME_OMEGA = "omega_class"   # Nueva tabla
+TABLE_NAME_REGISTROS = "registros_omega"  # Tabla para registros de combinaciones Omega
 
 def save_historico_to_db(df, mode='replace'):
     """
-    Guarda un DataFrame en la BD.
-    mode: 'replace' (por defecto) o 'append'.
+    Guarda un DataFrame en la BD. También se asegura de que la tabla
+    de registros omega exista.
     """
-    if df.empty:
+    if df.empty and mode == 'append': # Si no hay nada nuevo que añadir, no hacemos nada
         logger.info("El DataFrame está vacío. No se realizarán cambios en la base de datos.")
         return True, "No hay nuevos registros que guardar en la base de datos."
 
     try:
         conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.cursor()
+
+        # --- LÓGICA DE CREACIÓN DE TABLAS ---
+        # Aseguramos que la tabla de registros exista.
+        # IF NOT EXISTS previene errores si la tabla ya fue creada.
+        create_registros_table_query = f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME_REGISTROS} (
+                combinacion TEXT PRIMARY KEY,
+                nombre_completo TEXT NOT NULL,
+                movil TEXT NOT NULL,
+                fecha_registro DATETIME
+            );
+        """
+        cursor.execute(create_registros_table_query)
+        logger.info(f"Asegurada la existencia de la tabla '{TABLE_NAME_REGISTROS}'.")
+        # -----------------------------------
+
+        # Guardamos el histórico
         df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
+        conn.commit()
         conn.close()
         
         action = "guardaron" if mode == 'replace' else "añadieron"
@@ -154,3 +174,62 @@ def find_closest_omega(user_combo, match_count):
         logger.error(f"Error al buscar la combinación más cercana: {e}", exc_info=True)
         if conn: conn.close()
         return None
+    
+def register_omega_combination(combinacion, nombre, movil):
+    """Intenta registrar una nueva combinación Omega. Devuelve un mensaje de éxito o error."""
+    # Convertimos la lista de números a un string estandarizado para la PK
+    combo_str = "-".join(map(str, sorted(combinacion)))
+    
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.cursor()
+        query = f"""
+            INSERT INTO {TABLE_NAME_REGISTROS} (combinacion, nombre_completo, movil, fecha_registro)
+            VALUES (?, ?, ?, datetime('now', 'localtime'))
+        """
+        cursor.execute(query, (combo_str, nombre, movil))
+        conn.commit()
+        conn.close()
+        logger.info(f"Nueva combinación registrada por {nombre}: {combo_str}")
+        return True, "¡Combinación registrada con éxito!"
+    
+    except sqlite3.IntegrityError: # Esto se dispara si la PK (combinacion) ya existe
+        logger.warning(f"Intento de registrar una combinación duplicada: {combo_str}")
+        return False, "Esta combinación ya ha sido registrada por otro usuario."
+    except Exception as e:
+        logger.error(f"Error al registrar combinación: {e}", exc_info=True)
+        return False, "Ocurrió un error inesperado al registrar."
+    finally:
+        if conn:
+            conn.close()
+
+def get_all_registrations():
+    """Obtiene todos los registros de la tabla de registros Omega."""
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        df = pd.read_sql_query(f"SELECT combinacion, nombre_completo, movil, fecha_registro FROM {TABLE_NAME_REGISTROS}", conn)
+        conn.close()
+        return df
+    except Exception:
+        # Si la tabla no existe, devuelve un DataFrame vacío
+        return pd.DataFrame(columns=['combinacion', 'nombre_completo', 'movil', 'fecha_registro'])
+
+def update_registration(combinacion, new_data):
+    """Actualiza el nombre y/o móvil de un registro existente."""
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.cursor()
+        query = f"UPDATE {TABLE_NAME_REGISTROS} SET nombre_completo = ?, movil = ? WHERE combinacion = ?"
+        cursor.execute(query, (new_data['nombre_completo'], new_data['movil'], combinacion))
+        conn.commit()
+        conn.close()
+        logger.info(f"Registro actualizado para la combinación {combinacion}")
+        return True
+    except Exception as e:
+        logger.error(f"Error al actualizar registro: {e}", exc_info=True)
+        return False
+    finally:
+        if conn:
+            conn.close()

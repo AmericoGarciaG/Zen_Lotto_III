@@ -1,5 +1,6 @@
 import dash_bootstrap_components as dbc
 from dash import html, dcc
+from dash import html, dcc, dash_table
 
 def create_header():
     return html.Div(
@@ -19,6 +20,7 @@ def create_navigation():
                         dbc.Button("GENERADOR OMEGA", id="btn-nav-generador", className="nav-button"),
                         dbc.Button("GRÁFICOS", id="btn-nav-graficos", className="nav-button", disabled=True),
                         dbc.Button("VISOR DE HISTÓRICOS", id="btn-nav-historicos", className="nav-button", disabled=True),
+                        dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"), 
                         dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
                     ],
                     id="navigation-group",
@@ -97,3 +99,26 @@ def create_layout():
         fluid=False,
         className="main-container",
     )
+
+def create_registros_view():
+    return html.Div([
+        html.H3("Registro de Combinaciones Omega", className="text-center text-dark mb-4"),
+        dbc.Row(dbc.Col(
+            dbc.Button("Refrescar Datos", id="btn-refresh-registros", className="mb-3", color="primary", outline=True)
+        ), justify="end"),
+        
+        dash_table.DataTable(
+            id='table-registros',
+            columns=[
+                {'name': 'Combinación', 'id': 'combinacion', 'editable': False},
+                {'name': 'Nombre Completo', 'id': 'nombre_completo', 'editable': True},
+                {'name': 'Móvil', 'id': 'movil', 'editable': True},
+                {'name': 'Fecha de Registro', 'id': 'fecha_registro', 'editable': False},
+            ],
+            data=[], # Se poblará con un callback
+            page_size=15,
+            style_cell={'textAlign': 'center', 'fontFamily': 'sans-serif'},
+            style_header={'fontWeight': 'bold'},
+            style_table={'overflowX': 'auto'}
+        )
+    ])
