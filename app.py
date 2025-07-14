@@ -118,7 +118,7 @@ def handle_pregenerate_omega(n_clicks):
     total_time = end_time - start_time
     full_message = f"{message} (Tiempo de ejecución: {total_time:.2f} segundos)"
     color = "success" if success else "danger"
-    return dbc.Alert(full_message, color=color)
+    return dbc.Alert(full_message, color=color, duration=10000)
 
 # --- Callbacks del Generador ---
 @app.callback(
@@ -158,15 +158,15 @@ def handle_analizar_combinacion(n_clicks, *num_inputs): # Acepta 1 + 6 argumento
     
     # 1. Validación de la entrada del usuario
     if any(num is None or num == '' for num in num_inputs):
-        return dbc.Alert("Por favor, ingrese 6 números para analizar.", color="warning", duration=4000)
+        return dbc.Alert("Por favor, ingrese 6 números para analizar.", color="warning", duration=5000)
 
     try:
         # num_inputs ya es una tupla, la convertimos a lista de enteros
         combination = [int(num) for num in num_inputs]
         if len(set(combination)) != 6:
-            return dbc.Alert("Los 6 números deben ser únicos.", color="warning", duration=4000)
+            return dbc.Alert("Los 6 números deben ser únicos.", color="warning", duration=5000)
     except (ValueError, TypeError):
-        return dbc.Alert("Por favor, ingrese solo números válidos.", color="warning", duration=4000)
+        return dbc.Alert("Por favor, ingrese solo números válidos.", color="warning", duration=5000)
     
     # 2. Obtención de datos necesarios
     freqs = get_frequencies()
@@ -213,7 +213,7 @@ def handle_analizar_combinacion(n_clicks, *num_inputs): # Acepta 1 + 6 argumento
     ]
     
     # 5. Punto de retorno único
-    return dbc.Alert(body_content, color=color, duration=10000)
+    return dbc.Alert(body_content, color=color, duration=15000)
 
 
 logger.info("Callbacks registrados.")
