@@ -36,30 +36,40 @@ def create_generador_view():
         dbc.Col(dcc.Input(id=f"num-input-{i}", type="number", className="number-box"), width="auto")
         for i in range(6)
     ]
-    return html.Div([
-        dbc.Row(number_inputs, justify="center", className="mb-5 g-2"),
-        
-        # --- BLOQUE DE BOTONES HOMOLOGADO ---
-        dbc.Row([
-            dbc.Col(
-                # Cambiado a color="dark" y sin outline
-                dbc.Button("ANALIZAR COMBINACIÓN", id="btn-analizar", color="dark", className="action-button"), 
-                width="auto"
-            ),
-            dbc.Col(
-                dbc.Button("GENERAR OMEGA / AJUSTAR", id="btn-generar", color="dark", className="action-button"), 
-                width="auto"
-            ),
-        ], justify="center", align="center", className="g-3 mb-4"),
-        # ------------------------------------
+    
+    # Creamos el nuevo botón de limpieza
+    clear_button = dbc.Col(
+        dbc.Button(
+            html.I(className="fas fa-trash-alt"), # Ícono de bote de basura de Font Awesome
+            id="btn-clear-inputs",
+            color="secondary",
+            outline=True,
+            className="ms-2" # Margen a la izquierda para separarlo
+        ),
+        width="auto",
+        className="d-flex align-items-center" # Asegura alineación vertical
+    )
 
+    return html.Div([
+        # Añadimos el nuevo botón a la fila de los números
+        dbc.Row(
+            number_inputs + [clear_button],
+            justify="center",
+            align="center", # Alinea verticalmente los recuadros y el botón
+            className="mb-5 g-2"
+        ),
+        
+        # ... (resto del layout del generador sin cambios) ...
+        dbc.Row([
+            dbc.Col(dbc.Button("ANALIZAR COMBINACIÓN", id="btn-analizar", color="dark", className="action-button"), width="auto"),
+            dbc.Col(dbc.Button("GENERAR OMEGA / AJUSTAR", id="btn-generar", color="dark", className="action-button"), width="auto"),
+        ], justify="center", align="center", className="g-3 mb-4"),
         dbc.Row(
             dbc.Col(dcc.Input(id="input-nombre", placeholder="Nombre Completo", className="form-control"), width=8, md=6, lg=5, xl=4),
             justify="center",
             className="mb-4"
         ),
         dbc.Row(
-            # Este mantiene el estilo "outline" como botón secundario
             dbc.Col(dbc.Button("REGISTRAR OMEGA", id="btn-registrar", color="dark", outline=True, className="action-button", disabled=True), width="auto"),
             justify="center"
         ),
