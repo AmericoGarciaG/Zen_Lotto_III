@@ -32,7 +32,7 @@ def fue_un_clic_real(button_id):
     n_clicks = ctx.triggered[0]['value']
     return triggered_component_id == button_id and isinstance(n_clicks, int) and n_clicks > 0
 
-# --- Callbacks de Navegación ---
+# --- Callbacks de Navegación (sin cambios) ---
 @app.callback(
     Output("view-content", "children"),
     Input("btn-nav-generador", "n_clicks"),
@@ -59,8 +59,7 @@ def update_nav_buttons_style(gen_clicks, conf_clicks):
     else: gen_class += " active"
     return gen_class, conf_class
 
-# --- Callbacks de Configuración ---
-# ... (Los callbacks de configuración no cambian, los omito por brevedad pero deben estar en tu archivo) ...
+# --- Callbacks de Configuración (sin cambios) ---
 @app.callback(
     Output("notification-container", "children", allow_duplicate=True),
     Input("btn-gen-historico", "n_clicks"),
@@ -70,7 +69,6 @@ def handle_historical_load(n_clicks):
     if not fue_un_clic_real('btn-gen-historico'): return no_update
     from modules.data_ingestion import run_historical_load
     from modules.database import save_historico_to_db
-    logger.info("Callback 'handle_historical_load' disparado por clic real.")
     state = state_manager.get_state()
     last_concurso_in_db = state.get("last_concurso_in_db", 0)
     df_new, _, load_success = run_historical_load(last_concurso=last_concurso_in_db)
@@ -90,7 +88,6 @@ def handle_historical_load(n_clicks):
 def handle_omega_class_generation(n_clicks):
     if not fue_un_clic_real('btn-gen-omega'): return no_update
     from modules.omega_logic import calculate_and_save_frequencies
-    logger.info("Callback 'handle_omega_class_generation' disparado por clic real.")
     success, message = calculate_and_save_frequencies()
     color = "success" if success else "danger"
     return dbc.Alert(message, color=color, duration=5000)
@@ -103,7 +100,6 @@ def handle_omega_class_generation(n_clicks):
 def handle_pregenerate_omega(n_clicks):
     if not fue_un_clic_real('btn-pregen-omega'): return no_update
     from modules.omega_logic import pregenerate_omega_class
-    logger.info("Callback 'handle_pregenerate_omega' disparado por clic real.")
     start_time = time.time()
     success, message = pregenerate_omega_class()
     end_time = time.time()
@@ -112,100 +108,142 @@ def handle_pregenerate_omega(n_clicks):
     color = "success" if success else "danger"
     return dbc.Alert(full_message, color=color, duration=10000)
 
-# --- Callbacks del Generador ---
+# --- Callbacks del Generador (sin cambios) ---
 @app.callback(
-    # AÑADIMOS allow_duplicate=True a cada Output de los inputs
     [Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)] + 
-    [Output("notification-container", "children", allow_duplicate=True)],
+    [Output("notification-container", "children", allow_duplicate=True)] +
+    [Output('store-validated-omega', 'data', allow_duplicate=True)],
     Input("btn-generar", "n_clicks"),
     [State(f"num-input-{i}", "value") for i in range(6)],
     prevent_initial_call=True
 )
 def handle_generate_omega(n_clicks, *num_inputs):
-    # (El cuerpo de esta función no cambia, lo omito por brevedad)
-    if not fue_un_clic_real('btn-generar'): return [no_update] * 7
+    if not fue_un_clic_real('btn-generar'): return [no_update] * 8
     from modules.database import get_random_omega_combination
     from modules.omega_logic import evaluate_combination, adjust_to_omega, get_frequencies
-    logger.info(f"Callback 'GENERAR/AJUSTAR' disparado. Inputs: {num_inputs}")
+
     if all(num is None or num == '' for num in num_inputs):
-        logger.info("Modo: Generación aleatoria (inputs vacíos).")
         omega_combination = get_random_omega_combination()
-        if omega_combination: return omega_combination + [None]
+        if omega_combination: return omega_combination + [None, omega_combination]
         else:
-            error_msg = dbc.Alert("Error: No se pudo generar una combinación. ¿Falta pre-generar la Clase Omega?", color="warning", duration=5000)
-            return [no_update] * 6 + [error_msg]
+            error_msg = dbc.Alert("Error: No se pudo generar una combinación.", color="warning", duration=5000)
+            return [no_update] * 6 + [error_msg, None]
     else:
-        logger.info("Modo: Análisis y ajuste (inputs con datos).")
-        if any(num is None or num == '' for num in num_inputs): return [no_update] * 6 + [dbc.Alert("Por favor, ingrese 6 números para ajustar.", color="warning", duration=4000)]
+        if any(num is None or num == '' for num in num_inputs): return [no_update] * 7 + [None]
         try:
-            user_combo = [int(num) for num in num_inputs]
-            if len(set(user_combo)) != 6: return [no_update] * 6 + [dbc.Alert("Los 6 números deben ser únicos para ajustar.", color="warning", duration=4000)]
-        except (ValueError, TypeError): return [no_update] * 6 + [dbc.Alert("Por favor, ingrese solo números válidos para ajustar.", color="warning", duration=4000)]
+            user_combo = sorted([int(num) for num in num_inputs])
+            if len(set(user_combo)) != 6: return [no_update] * 7 + [None]
+        except (ValueError, TypeError): return [no_update] * 7 + [None]
+        
         freqs = get_frequencies()
-        if freqs is None: return [no_update] * 6 + [dbc.Alert("Error: Frecuencias no generadas. Ve a Configuración.", color="danger")]
+        if freqs is None: return [no_update] * 7 + [None]
+        
         eval_result = evaluate_combination(user_combo, freqs)
         if eval_result.get("esOmega"):
-            success_msg = dbc.Alert(f"¡Tu combinación {user_combo} ya es de Clase Omega! No necesita ajuste.", color="success", duration=6000)
-            return [no_update] * 6 + [success_msg]
-        logger.info(f"La combinación {user_combo} no es Omega. Buscando ajuste...")
+            msg = dbc.Alert(f"¡Tu combinación {user_combo} ya es de Clase Omega!", color="success", duration=6000)
+            return [no_update] * 6 + [msg, user_combo]
+        
         adjusted_combo, matches = adjust_to_omega(user_combo)
         if adjusted_combo:
-            ajuste_msg = dbc.Alert(f"¡Combinación ajustada! Se mantuvieron {matches} de tus números y se cambiaron {6 - matches} para que sea Omega.", color="info", duration=8000)
-            return adjusted_combo + [ajuste_msg]
+            msg = dbc.Alert(f"¡Ajuste exitoso! Se mantuvieron {matches} de tus números.", color="info", duration=8000)
+            return adjusted_combo + [msg, adjusted_combo]
         else:
-            no_ajuste_msg = dbc.Alert(f"No se encontró un ajuste cercano para tu combinación. Intenta con otros números o genera una aleatoria.", color="danger", duration=8000)
-            return [no_update] * 6 + [no_ajuste_msg]
+            msg = dbc.Alert("No se encontró un ajuste cercano.", color="danger", duration=8000)
+            return [no_update] * 6 + [msg, None]
 
+# --- CALLBACK DE ANÁLISIS CON LA ESTRUCTURA QUE FUNCIONA ---
 @app.callback(
     Output("notification-container", "children", allow_duplicate=True),
+    Output('store-validated-omega', 'data', allow_duplicate=True),
     Input("btn-analizar", "n_clicks"),
     [State(f"num-input-{i}", "value") for i in range(6)],
     prevent_initial_call=True
 )
 def handle_analizar_combinacion(n_clicks, *num_inputs):
-    # (El cuerpo de esta función no cambia, lo omito por brevedad)
-    if not fue_un_clic_real('btn-analizar'): return no_update
+    if not fue_un_clic_real('btn-analizar'):
+        return no_update, no_update
+    
     from modules.omega_logic import get_frequencies, evaluate_combination
-    logger.info(f"Callback 'handle_analizar_combinacion' disparado. Inputs: {num_inputs}")
-    if any(num is None or num == '' for num in num_inputs): return dbc.Alert("Por favor, ingrese 6 números para analizar.", color="warning", duration=4000)
+    
     try:
-        combination = [int(num) for num in num_inputs]
-        if len(set(combination)) != 6: return dbc.Alert("Los 6 números deben ser únicos.", color="warning", duration=4000)
-    except (ValueError, TypeError): return dbc.Alert("Por favor, ingrese solo números válidos.", color="warning", duration=4000)
+        if any(num is None or num == '' for num in num_inputs):
+            raise ValueError("Por favor, ingrese 6 números.")
+        combination = sorted([int(num) for num in num_inputs])
+        if len(set(combination)) != 6:
+            raise ValueError("Los 6 números deben ser únicos.")
+    except (ValueError, TypeError) as e:
+        return dbc.Alert(str(e), color="warning", duration=4000), None
+
     freqs = get_frequencies()
-    if freqs is None: return dbc.Alert("Error: Las frecuencias no han sido generadas.", color="danger")
+    if freqs is None:
+        return dbc.Alert("Frecuencias no generadas.", color="danger"), None
+        
     result = evaluate_combination(combination, freqs)
-    if not isinstance(result, dict): return dbc.Alert("Ocurrió un error inesperado durante la evaluación.", color="danger")
-    if result.get("error"): return dbc.Alert(result["error"], color="danger")
-    es_omega, title, color = (result.get("esOmega", False), "¡Combinación de Clase Omega! ✅", "success") if result.get("esOmega", False) else (False, "Combinación No-Omega ❌", "danger")
+    
+    if not isinstance(result, dict) or result.get("error"):
+        error_msg = result.get("error") if isinstance(result, dict) else "Error en evaluación."
+        return dbc.Alert(error_msg, color="danger"), None
+
+    es_omega = result.get("esOmega", False)
+    title = "¡Clase Omega! ✅" if es_omega else "No-Omega ❌"
+    color = "success" if es_omega else "danger"
+    
     combinacion_ordenada, criterios = result.get("combinacion", []), result.get("criterios", {})
-    if not isinstance(criterios, dict): return dbc.Alert("Faltan datos de criterios en el resultado.", color="danger")
+    
+    # Esta es la guarda de Pylance que faltaba en la versión anterior
+    if not isinstance(criterios, dict):
+         return dbc.Alert("Faltan datos de criterios en el resultado.", color="danger"), None
+
     pares, tercias, cuartetos = criterios.get("pares", {}), criterios.get("tercias", {}), criterios.get("cuartetos", {})
+    
     body_content = [
-        html.H4(title, className="alert-heading"), html.P(f"Tu combinación: {combinacion_ordenada}"), html.Hr(),
-        html.P("Detalles de la evaluación:", className="mb-0"),
+        html.H4(title, className="alert-heading"),
+        html.P(f"Tu combinación: {combinacion_ordenada}"),
+        html.Hr(),
         html.Ul([
-            html.Li(f"Afinidad de Pares: {pares.get('score', 'N/A')} / {pares.get('umbral', 'N/A')} {'✅' if pares.get('cumple') else '❌'}"),
-            html.Li(f"Afinidad de Tercias: {tercias.get('score', 'N/A')} / {tercias.get('umbral', 'N/A')} {'✅' if tercias.get('cumple') else '❌'}"),
-            html.Li(f"Afinidad de Cuartetos: {cuartetos.get('score', 'N/A')} / {cuartetos.get('umbral', 'N/A')} {'✅' if cuartetos.get('cumple') else '❌'}")
+            html.Li(f"Pares: {pares.get('score')} / {pares.get('umbral')} {'✅' if pares.get('cumple') else '❌'}"),
+            html.Li(f"Tercias: {tercias.get('score')} / {tercias.get('umbral')} {'✅' if tercias.get('cumple') else '❌'}"),
+            html.Li(f"Cuartetos: {cuartetos.get('score')} / {cuartetos.get('umbral')} {'✅' if cuartetos.get('cumple') else '❌'}")
         ])
     ]
-    return dbc.Alert(body_content, color=color, duration=10000)
+    
+    validated_combo_for_store = combination if es_omega else None
+    return dbc.Alert(body_content, color=color, duration=10000), validated_combo_for_store
 
-# --- NUEVO CALLBACK PARA LIMPIAR INPUTS ---
+
 @app.callback(
-    [Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)],
+    [Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)] +
+    [Output('store-validated-omega', 'data', allow_duplicate=True)],
     Input("btn-clear-inputs", "n_clicks"),
     prevent_initial_call=True
 )
 def handle_clear_inputs(n_clicks):
-    if not fue_un_clic_real('btn-clear-inputs'):
-        return [no_update] * 6
-        
-    logger.info("Borrando inputs del generador.")
-    return [None] * 6
+    if not fue_un_clic_real('btn-clear-inputs'): return [no_update] * 7
+    return [None] * 6 + [None]
 
-# --- Punto de Entrada ---
+@app.callback(
+    # --- Añadimos la nueva salida para el input del móvil ---
+    Output('input-nombre', 'disabled'),
+    Output('input-movil', 'disabled'), # <-- NUEVA SALIDA
+    Output('btn-registrar', 'disabled'),
+    # ----------------------------------------------------
+    Input('store-validated-omega', 'data'),
+    [Input(f"num-input-{i}", "value") for i in range(6)]
+)
+def control_registration_fields(validated_omega, *current_inputs_tuple):
+    # La lógica de esta función no necesita cambiar, solo sus outputs.
+    try:
+        current_inputs = sorted([int(i) for i in current_inputs_tuple if i is not None and i != ''])
+    except (ValueError, TypeError):
+        current_inputs = []
+    
+    if validated_omega and len(current_inputs) == 6 and sorted(validated_omega) == current_inputs:
+        # Habilitar todo
+        return False, False, False # (nombre, movil, registrar)
+    
+    # Deshabilitar todo
+    return True, True, True # (nombre, movil, registrar)
+
 if __name__ == "__main__":
     logger.info("Iniciando servidor (Debug OFF).")
     app.run(debug=False, port=8050)
