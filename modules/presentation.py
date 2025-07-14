@@ -19,22 +19,33 @@ def create_navigation():
 
 def create_generador_view():
     number_inputs = [
-        dbc.Col(dcc.Input(id=f"num-input-{i}", type="number", className="number-box", disabled=True), width="auto")
+        dbc.Col(dcc.Input(id=f"num-input-{i}", type="number", className="number-box"), width="auto")
         for i in range(6)
     ]
     return html.Div([
         dbc.Row(number_inputs, justify="center", className="mb-5 g-2"),
         dbc.Row([
-            # Todos los botones deshabilitados al inicio
-            dbc.Col(dbc.Button("ANALIZAR COMBINACIÓN", id="btn-analizar", color="secondary", className="action-button", disabled=True), width="auto"),
-            dbc.Col(dbc.Button("GENERAR OMEGA", id="btn-generar", color="dark", className="action-button", disabled=True), width="auto"),
+            # Aplicamos el mismo estilo a ambos botones
+            dbc.Col(dbc.Button("ANALIZAR COMBINACIÓN", id="btn-analizar", color="secondary", className="action-button"), width="auto"),
+            dbc.Col(dbc.Button("GENERAR OMEGA", id="btn-generar", color="dark", className="action-button"), width="auto"),
         ], justify="center", align="center", className="g-3 mb-4"),
+        dbc.Row(
+            dbc.Col(dcc.Input(id="input-nombre", placeholder="Nombre Completo", className="form-control"), width=8, md=6, lg=5, xl=4),
+            justify="center",
+            className="mb-4"
+        ),
+        dbc.Row(
+            # También homologamos el botón de registrar
+            dbc.Col(dbc.Button("REGISTRAR OMEGA", id="btn-registrar", color="dark", outline=True, className="action-button", disabled=True), width="auto"),
+            justify="center"
+        ),
     ])
 
 def create_configuracion_view():
     return html.Div([
         html.H3("Configuración", className="text-center text-dark mb-4"),
         dbc.Row([
+            # Usamos el mismo estilo en todos
             dbc.Col(dbc.Button("ACTUALIZAR HISTÓRICO", id="btn-gen-historico", color="secondary", className="action-button"), width="auto"),
             dbc.Col(dbc.Button("ACTUALIZAR FRECUENCIAS", id="btn-gen-omega", color="secondary", className="action-button"), width="auto"),
             dbc.Col(dbc.Button("PRE-GENERAR CLASE OMEGA", id="btn-pregen-omega", color="dark", className="action-button"), width="auto"),

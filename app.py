@@ -3,22 +3,18 @@ start_total = time.perf_counter()
 
 import logging
 from utils.logger_config import setup_logger
-from utils import state_manager # Importamos el gestor de estado
+from utils import state_manager
 
 setup_logger()
 logger = logging.getLogger(__name__)
 
 logger.info("="*50)
-logger.info("INICIO DE LA APLICACIÓN ZEN LOTTO (MODO LAZY-IMPORT)")
+logger.info("INICIO DE LA APLICACIÓN ZEN LOTTO (MODO DEPURACIÓN CONTROLADA)")
 logger.info("="*50)
 
-start_imports = time.perf_counter()
-logger.info("Importando librerías esenciales (Dash)...")
 import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc, Input, Output, ctx, State, no_update
-end_imports = time.perf_counter()
-logger.info(f"--- TIEMPO DE IMPORTS ESENCIALES: {end_imports - start_imports:.4f} segundos ---")
 
 logger.info("Inicializando la aplicación Dash...")
 app = dash.Dash(
@@ -38,9 +34,7 @@ logger.info("Registrando callbacks de la aplicación...")
 
 # --- Función de Ayuda para Callbacks ---
 def fue_un_clic_real(button_id):
-    """Verifica si un callback fue disparado por un clic real del usuario."""
-    if not ctx.triggered:
-        return False
+    if not ctx.triggered: return False
     triggered_component_id = ctx.triggered[0]['prop_id'].split('.')[0]
     n_clicks = ctx.triggered[0]['value']
     return triggered_component_id == button_id and isinstance(n_clicks, int) and n_clicks > 0
@@ -84,31 +78,17 @@ def handle_historical_load(n_clicks):
     if not fue_un_clic_real('btn-gen-historico'): return no_update
     from modules.data_ingestion import run_historical_load
     from modules.database import save_historico_to_db
-
     logger.info("Callback 'handle_historical_load' disparado por clic real.")
-    
     state = state_manager.get_state()
     last_concurso_in_db = state.get("last_concurso_in_db", 0)
-    
     df_new, _, load_success = run_historical_load(last_concurso=last_concurso_in_db)
-    
-    # --- INICIO DE LA CORRECCIÓN ---
-    # Comprobamos explícitamente si la carga falló O si el DataFrame es None
-    if not load_success or df_new is None:
-        return dbc.Alert("Error durante la carga o DataFrame nulo. Revise logs.", color="danger", duration=5000)
-    
+    if not load_success or df_new is None: return dbc.Alert("Error durante la carga. Revise logs.", color="danger", duration=5000)
     save_success, save_message = save_historico_to_db(df_new, mode='append')
-    
-    if not save_success:
-        return dbc.Alert(save_message, color="danger", duration=5000)
-    
-    # Ahora, esta comprobación es 100% segura
+    if not save_success: return dbc.Alert(save_message, color="danger", duration=5000)
     if save_success and not df_new.empty:
         state["last_concurso_in_db"] = int(df_new['concurso'].max())
         state_manager.save_state(state)
-        
     return dbc.Alert(save_message, color="success", duration=5000)
-    # --- FIN DE LA CORRECCIÓN ---
 
 @app.callback(
     Output("notification-container", "children", allow_duplicate=True),
@@ -159,10 +139,87 @@ def handle_generate_omega(n_clicks):
         error_message = dbc.Alert("Error: La Clase Omega no ha sido generada. Ve a Configuración y ejecútala.", color="warning", duration=5000)
         return [no_update] * 6 + [error_message]
 
+# --- BLOQUE REINTRODUCIDO Y CORREGIDO ---
+@app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Input("btn-analizar", "n_clicks"),
+    [State(f"num-input-{i}", "value") for i in range(6)], # Pasa 6 argumentos de State
+    prevent_initial_call=True
+)
+def handle_analizar_combinacion(n_clicks, *num_inputs): # Acepta 1 + 6 argumentos
+    """Evalúa la combinación ingresada por el usuario."""
+    # El asterisco en *num_inputs agrupa los 6 argumentos de State en una sola tupla.
+    
+    if not fue_un_clic_real('btn-analizar'):
+        return no_update
+
+    from modules.omega_logic import get_frequencies, evaluate_combination
+    logger.info(f"Callback 'handle_analizar_combinacion' disparado. Inputs: {num_inputs}")
+    
+    # 1. Validación de la entrada del usuario
+    if any(num is None or num == '' for num in num_inputs):
+        return dbc.Alert("Por favor, ingrese 6 números para analizar.", color="warning", duration=4000)
+
+    try:
+        # num_inputs ya es una tupla, la convertimos a lista de enteros
+        combination = [int(num) for num in num_inputs]
+        if len(set(combination)) != 6:
+            return dbc.Alert("Los 6 números deben ser únicos.", color="warning", duration=4000)
+    except (ValueError, TypeError):
+        return dbc.Alert("Por favor, ingrese solo números válidos.", color="warning", duration=4000)
+    
+    # 2. Obtención de datos necesarios
+    freqs = get_frequencies()
+    if freqs is None:
+        return dbc.Alert("Error: Las frecuencias no han sido generadas. Ve a Configuración.", color="danger")
+        
+    # 3. Evaluación de la combinación
+    result = evaluate_combination(combination, freqs)
+    
+    # 4. Construcción del mensaje de respuesta (a prueba de Pylance)
+    # Verificación explícita de que 'result' es un diccionario
+    if not isinstance(result, dict):
+        return dbc.Alert("Ocurrió un error inesperado durante la evaluación.", color="danger")
+    # Verificación de la clave de error
+    if result.get("error"):
+        return dbc.Alert(result["error"], color="danger")
+
+    # A partir de aquí, Pylance sabe que 'result' es un diccionario de éxito
+    es_omega = result.get("esOmega", False)
+    title = "¡Combinación de Clase Omega! ✅" if es_omega else "Combinación No-Omega ❌"
+    color = "success" if es_omega else "danger"
+    combinacion_ordenada = result.get("combinacion", [])
+    
+    # Verificación explícita para la clave 'criterios'
+    criterios = result.get("criterios", {})
+    if not isinstance(criterios, dict):
+         return dbc.Alert("Faltan datos de criterios en el resultado.", color="danger")
+
+    # Ahora Pylance sabe que 'criterios' es un dict, por lo que .get() es seguro.
+    pares = criterios.get("pares", {})
+    tercias = criterios.get("tercias", {})
+    cuartetos = criterios.get("cuartetos", {})
+    
+    body_content = [
+        html.H4(title, className="alert-heading"),
+        html.P(f"Tu combinación: {combinacion_ordenada}"),
+        html.Hr(),
+        html.P("Detalles de la evaluación:", className="mb-0"),
+        html.Ul([
+            html.Li(f"Afinidad de Pares: {pares.get('score', 'N/A')} / {pares.get('umbral', 'N/A')} {'✅' if pares.get('cumple') else '❌'}"),
+            html.Li(f"Afinidad de Tercias: {tercias.get('score', 'N/A')} / {tercias.get('umbral', 'N/A')} {'✅' if tercias.get('cumple') else '❌'}"),
+            html.Li(f"Afinidad de Cuartetos: {cuartetos.get('score', 'N/A')} / {cuartetos.get('umbral', 'N/A')} {'✅' if cuartetos.get('cumple') else '❌'}")
+        ])
+    ]
+    
+    # 5. Punto de retorno único
+    return dbc.Alert(body_content, color=color, duration=10000)
+
 
 logger.info("Callbacks registrados.")
 end_total = time.perf_counter()
 logger.info(f"--- TIEMPO TOTAL DE ARRANQUE DEL SCRIPT: {end_total - start_total:.4f} segundos ---")
+
 
 if __name__ == "__main__":
     logger.info("Iniciando servidor (Debug OFF).")
