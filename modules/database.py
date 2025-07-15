@@ -5,239 +5,136 @@ import config
 
 logger = logging.getLogger(__name__)
 
-TABLE_NAME_HISTORICO = "historico" # Renombramos para claridad
-TABLE_NAME_OMEGA = "omega_class"   # Nueva tabla
-TABLE_NAME_REGISTROS = "registros_omega"  # Tabla para registros de combinaciones Omega
+TABLE_NAME_HISTORICO = "historico"
+TABLE_NAME_OMEGA = "omega_class"
+TABLE_NAME_REGISTROS = "registros_omega"
 
 def save_historico_to_db(df, mode='replace'):
     """
-    Guarda un DataFrame en la BD. También se asegura de que la tabla
-    de registros omega exista.
+    Guarda un DataFrame en la BD. También se asegura de que las otras tablas existan.
     """
-    if df.empty and mode == 'append': # Si no hay nada nuevo que añadir, no hacemos nada
-        logger.info("El DataFrame está vacío. No se realizarán cambios en la base de datos.")
-        return True, "No hay nuevos registros que guardar en la base de datos."
+    if df.empty and mode == 'append':
+        return True, "No hay nuevos registros que guardar."
 
     try:
         conn = sqlite3.connect(config.DB_FILE)
         cursor = conn.cursor()
 
-        # --- LÓGICA DE CREACIÓN DE TABLAS ---
-        # Aseguramos que la tabla de registros exista.
-        # IF NOT EXISTS previene errores si la tabla ya fue creada.
-        create_registros_table_query = f"""
+        cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {TABLE_NAME_REGISTROS} (
-                combinacion TEXT PRIMARY KEY,
-                nombre_completo TEXT NOT NULL,
-                movil TEXT NOT NULL,
-                fecha_registro DATETIME
+                combinacion TEXT PRIMARY KEY, nombre_completo TEXT NOT NULL,
+                movil TEXT NOT NULL, fecha_registro DATETIME
             );
-        """
-        cursor.execute(create_registros_table_query)
-        logger.info(f"Asegurada la existencia de la tabla '{TABLE_NAME_REGISTROS}'.")
-        # -----------------------------------
-
-        # Guardamos el histórico
+        """)
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME_OMEGA} (
+                c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER,
+                ha_salido INTEGER, afinidad_pares INTEGER, afinidad_tercias INTEGER,
+                afinidad_cuartetos INTEGER,
+                PRIMARY KEY (c1, c2, c3, c4, c5, c6)
+            );
+        """)
+        
         df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
         conn.commit()
         conn.close()
         
         action = "guardaron" if mode == 'replace' else "añadieron"
-        message = f"Se {action} {len(df)} registros en la base de datos ({config.DB_FILE})."
-        logger.info(message)
+        message = f"Se {action} {len(df)} registros en la base de datos."
         return True, message
 
     except Exception as e:
-        logger.error(f"Error al guardar en la base de datos: {e}", exc_info=True)
         return False, f"Error al guardar en la base de datos: {e}"
 
 def read_historico_from_db():
     """
-    Lee la tabla 'historico' completa desde la base de datos SQLite y la
-    devuelve como un DataFrame de pandas.
+    Lee la tabla 'historico' completa, ordenada por el concurso más reciente.
     """
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        df = pd.read_sql_query(f"SELECT * FROM {TABLE_NAME_HISTORICO}", conn, parse_dates=['fecha'])
+        query = f"SELECT * FROM {TABLE_NAME_HISTORICO} ORDER BY concurso DESC"
+        df = pd.read_sql_query(query, conn)
         conn.close()
         return df
-    except sqlite3.OperationalError:
-        logger.warning(f"La tabla '{TABLE_NAME_HISTORICO}' no existe en la base de datos. Se retornará None.")
-        return None
-    except Exception as e:
-        logger.error(f"Error al leer desde la base de datos: {e}", exc_info=True)
-        return None
-    
+    except pd.errors.DatabaseError:
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
 def save_omega_class(omega_combinations_df):
-    """
-    Guarda un DataFrame de combinaciones Omega en la base de datos.
-    Reemplaza la tabla por completo si ya existe.
-
-    Args:
-        omega_combinations_df (pd.DataFrame): DataFrame con las combinaciones Omega.
-
-    Returns:
-        tuple: (bool, str) - Éxito y mensaje.
-    """
     if omega_combinations_df.empty:
-        message = "No se encontraron combinaciones Omega para guardar."
-        logger.warning(message)
-        return False, message
-
+        return False, "No se encontraron combinaciones Omega para guardar."
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        # Guardamos el DataFrame en la nueva tabla.
         omega_combinations_df.to_sql(TABLE_NAME_OMEGA, conn, if_exists='replace', index=False)
         conn.close()
-        
-        message = f"Pre-generación completada. Se guardaron {len(omega_combinations_df)} combinaciones Omega en la tabla '{TABLE_NAME_OMEGA}'."
-        logger.info(message)
-        return True, message
-
+        return True, f"Pre-generación completada. Se guardaron {len(omega_combinations_df)} combinaciones Omega."
     except Exception as e:
-        message = f"Error al guardar la Clase Omega en la base de datos: {e}"
-        logger.error(message, exc_info=True)
-        return False, message
+        return False, f"Error al guardar la Clase Omega: {e}"
     
 def get_random_omega_combination():
-    """
-    Selecciona una combinación aleatoria INÉDITA (ha_salido=0) de la tabla 'omega_class'.
-    """
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        # --- CONSULTA MODIFICADA ---
-        # Añadimos la condición WHERE para filtrar solo las que no han salido
         query = f"SELECT c1, c2, c3, c4, c5, c6 FROM {TABLE_NAME_OMEGA} WHERE ha_salido = 0 ORDER BY RANDOM() LIMIT 1"
-        # -------------------------
-        cursor = conn.cursor()
-        cursor.execute(query)
-        
-        row = cursor.fetchone()
+        row = pd.read_sql_query(query, conn).iloc[0].tolist()
         conn.close()
-        
-        if row:
-            logger.info(f"Combinación Omega aleatoria INÉDITA obtenida de la BD: {list(row)}")
-            return list(row)
-        else:
-            logger.warning("No se encontró ninguna combinación Omega INÉDITA disponible.")
-            return None
-
-    except sqlite3.OperationalError:
-        logger.error(f"La tabla '{TABLE_NAME_OMEGA}' no existe. Debe ser pre-generada primero.", exc_info=True)
+        return row
+    except (pd.errors.DatabaseError, IndexError, Exception):
         if conn: conn.close()
         return None
-    except Exception as e:
-        logger.error(f"Error al obtener una combinación Omega aleatoria: {e}", exc_info=True)
-        if conn: conn.close()
-        return None
-    
-# modules/database.py
 
 def find_closest_omega(user_combo, match_count):
-    """
-    Busca en la BD una combinación Omega aleatoria que tenga exactamente
-    'match_count' números en común con la combinación del usuario.
-    """
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        # SQLite no tiene un 'IN' para tuplas, así que lo formateamos directamente.
-        # Es seguro porque sabemos que user_combo es una lista de números.
         user_combo_str = ", ".join(map(str, user_combo))
-        
-        # Esta consulta cuenta cuántas columnas (c1 a c6) están en la lista de números del usuario.
         query = f"""
-            SELECT c1, c2, c3, c4, c5, c6
-            FROM {TABLE_NAME_OMEGA}
-            WHERE 
+            SELECT c1, c2, c3, c4, c5, c6 FROM {TABLE_NAME_OMEGA}
+            WHERE (
                 (CASE WHEN c1 IN ({user_combo_str}) THEN 1 ELSE 0 END +
                  CASE WHEN c2 IN ({user_combo_str}) THEN 1 ELSE 0 END +
                  CASE WHEN c3 IN ({user_combo_str}) THEN 1 ELSE 0 END +
                  CASE WHEN c4 IN ({user_combo_str}) THEN 1 ELSE 0 END +
                  CASE WHEN c5 IN ({user_combo_str}) THEN 1 ELSE 0 END +
                  CASE WHEN c6 IN ({user_combo_str}) THEN 1 ELSE 0 END) = ?
-            AND ha_salido = 0
-            ORDER BY RANDOM()
-            LIMIT 1
+            ) AND ha_salido = 0
+            ORDER BY RANDOM() LIMIT 1
         """
-        cursor = conn.cursor()
-        # Pasamos match_count como un parámetro seguro a la consulta
-        cursor.execute(query, (match_count,))
-        
-        row = cursor.fetchone()
+        df = pd.read_sql_query(query, conn, params=(match_count,))
         conn.close()
-        
-        return list(row) if row else None
-
-    except Exception as e:
-        logger.error(f"Error al buscar la combinación más cercana: {e}", exc_info=True)
+        return df.iloc[0].tolist() if not df.empty else None
+    except Exception:
         if conn: conn.close()
         return None
-    
+
 def register_omega_combination(combinacion, nombre, movil):
-    """Intenta registrar una nueva combinación Omega. Devuelve un mensaje de éxito o error."""
-    # Convertimos la lista de números a un string estandarizado para la PK
     combo_str = "-".join(map(str, sorted(combinacion)))
-    
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
         cursor = conn.cursor()
-        query = f"""
-            INSERT INTO {TABLE_NAME_REGISTROS} (combinacion, nombre_completo, movil, fecha_registro)
-            VALUES (?, ?, ?, datetime('now', 'localtime'))
-        """
+        query = f"INSERT INTO {TABLE_NAME_REGISTROS} (combinacion, nombre_completo, movil, fecha_registro) VALUES (?, ?, ?, datetime('now', 'localtime'))"
         cursor.execute(query, (combo_str, nombre, movil))
         conn.commit()
-        conn.close()
-        logger.info(f"Nueva combinación registrada por {nombre}: {combo_str}")
         return True, "¡Combinación registrada con éxito!"
-    
-    except sqlite3.IntegrityError: # Esto se dispara si la PK (combinacion) ya existe
-        logger.warning(f"Intento de registrar una combinación duplicada: {combo_str}")
-        return False, "Esta combinación ya ha sido registrada por otro usuario."
-    except Exception as e:
-        logger.error(f"Error al registrar combinación: {e}", exc_info=True)
+    except sqlite3.IntegrityError:
+        return False, "Esta combinación ya ha sido registrada."
+    except Exception:
         return False, "Ocurrió un error inesperado al registrar."
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 def get_all_registrations():
-    """Obtiene todos los registros de la tabla de registros Omega."""
     try:
         conn = sqlite3.connect(config.DB_FILE)
-        df = pd.read_sql_query(f"SELECT combinacion, nombre_completo, movil, fecha_registro FROM {TABLE_NAME_REGISTROS}", conn)
+        df = pd.read_sql_query(f"SELECT * FROM {TABLE_NAME_REGISTROS}", conn)
         conn.close()
         return df
     except Exception:
-        # Si la tabla no existe, devuelve un DataFrame vacío
         return pd.DataFrame(columns=['combinacion', 'nombre_completo', 'movil', 'fecha_registro'])
 
-def update_registration(combinacion, new_data):
-    """Actualiza el nombre y/o móvil de un registro existente."""
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        cursor = conn.cursor()
-        query = f"UPDATE {TABLE_NAME_REGISTROS} SET nombre_completo = ?, movil = ? WHERE combinacion = ?"
-        cursor.execute(query, (new_data['nombre_completo'], new_data['movil'], combinacion))
-        conn.commit()
-        conn.close()
-        logger.info(f"Registro actualizado para la combinación {combinacion}")
-        return True
-    except Exception as e:
-        logger.error(f"Error al actualizar registro: {e}", exc_info=True)
-        return False
-    finally:
-        if conn:
-            conn.close()
-
-# ... (importaciones y funciones existentes) ...
-
 def delete_registration(combinacion_str):
-    """Elimina un registro de la tabla de registros Omega por su PK."""
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
@@ -245,18 +142,23 @@ def delete_registration(combinacion_str):
         query = f"DELETE FROM {TABLE_NAME_REGISTROS} WHERE combinacion = ?"
         cursor.execute(query, (combinacion_str,))
         conn.commit()
-        
-        # Verificamos si realmente se borró una fila
-        if cursor.rowcount > 0:
-            logger.info(f"Registro eliminado para la combinación {combinacion_str}")
-            return True, "Registro eliminado con éxito."
-        else:
-            logger.warning(f"Se intentó eliminar una combinación no existente: {combinacion_str}")
-            return False, "El registro no fue encontrado (quizás ya fue eliminado)."
-
-    except Exception as e:
-        logger.error(f"Error al eliminar registro: {e}", exc_info=True)
+        if cursor.rowcount > 0: return True, "Registro eliminado con éxito."
+        else: return False, "El registro no fue encontrado."
+    except Exception:
         return False, "Ocurrió un error inesperado al eliminar."
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
+
+# --- NUEVA FUNCIÓN PARA LOS GRÁFICOS ---
+def count_omega_class():
+    """Cuenta el número total de combinaciones en la tabla omega_class."""
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        query = f"SELECT COUNT(*) FROM {TABLE_NAME_OMEGA}"
+        count = pd.read_sql_query(query, conn).iloc[0, 0]
+        conn.close()
+        return count
+    except (pd.errors.DatabaseError, IndexError, Exception):
+        if conn: conn.close()
+        return 0

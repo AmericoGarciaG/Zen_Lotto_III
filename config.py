@@ -2,18 +2,17 @@
 HISTORICAL_DATA_URL = "https://www.loterianacional.gob.mx/Home/Historicos?ARHP=TQBlAGwAYQB0AGUALQBSAGUAdAByAG8A"
 
 # Columnas esperadas en el archivo CSV para validación.
-# Ahora incluimos Bolsa y Fecha.
 EXPECTED_COLUMNS = ['CONCURSO', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'BOLSA', 'FECHA']
 
 # Archivo de la base de datos
 DB_FILE = "zen_lotto.db"
 # Archivo de frecuencias
 FREQUENCIES_FILE = "frecuencias.json"
-
-# Umbrales para la clasificación Omega
-UMBRAL_PARES = 459
-UMBRAL_TERCIAS = 74
-UMBRAL_CUARTETOS = 10
-
 # Archivo de estado central
 STATE_FILE = "system_state.json"
+
+# Umbrales para la clasificación Omega
+UMBRAL_PARES = 45
+UMBRAL_TERCIAS = 7
+UMBRAL_CUARTETOS = 10
+
