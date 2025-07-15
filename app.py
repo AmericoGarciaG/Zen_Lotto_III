@@ -175,9 +175,7 @@ def handle_analizar_combinacion(n_clicks, *num_inputs):
     if not isinstance(result, dict) or result.get("error"):
         error_msg = result.get("error") if isinstance(result, dict) else "Error en evaluación."
         return dbc.Alert(error_msg, color="danger"), None
-    es_omega = result.get("esOmega", False)
-    title = "¡Clase Omega! ✅" if es_omega else "No-Omega ❌"
-    color = "success" if es_omega else "danger"
+    es_omega, title, color = (True, "¡Clase Omega! ✅", "success") if result.get("esOmega") else (False, "No-Omega ❌", "danger")
     combinacion_ordenada, criterios = result.get("combinacion", []), result.get("criterios", {})
     if not isinstance(criterios, dict): return dbc.Alert("Faltan datos de criterios.", color="danger"), None
     pares, tercias, cuartetos = criterios.get("pares", {}), criterios.get("tercias", {}), criterios.get("cuartetos", {})
@@ -215,7 +213,8 @@ def control_registration_fields(validated_omega, *current_inputs_tuple):
     if validated_omega and len(current_inputs) == 6 and sorted(validated_omega) == current_inputs: return False, False, False
     return True, True, True
 
-# --- NUEVOS CALLBACKS PARA REGISTRO ---
+# --- NUEVOS CALLBACKS PARA REGISTRO Y GESTIÓN ---
+
 @app.callback(
     Output("notification-container", "children", allow_duplicate=True),
     Input("btn-registrar", "n_clicks"),
@@ -234,16 +233,63 @@ def handle_register_omega(n_clicks, validated_omega, nombre, movil):
 @app.callback(
     Output('table-registros', 'data'),
     Input('btn-refresh-registros', 'n_clicks'),
-    Input('btn-nav-registros', 'n_clicks')
+    Input('btn-nav-registros', 'n_clicks'),
+    State('modal-confirm-delete', 'is_open') # Usamos State en lugar de Input
 )
-def populate_registros_table(refresh_clicks, nav_clicks):
-    from modules.database import get_all_registrations
-    # Solo se ejecuta si el trigger es uno de los botones de entrada
-    if ctx.triggered_id in ['btn-refresh-registros', 'btn-nav-registros']:
+def populate_registros_table(refresh_clicks, nav_clicks, is_modal_open):
+    # La tabla se actualiza si se presiona "refrescar", se entra a la pestaña,
+    # o si el modal de confirmación NO está abierto (lo que implica que se cerró)
+    if ctx.triggered_id in ['btn-refresh-registros', 'btn-nav-registros'] or (ctx.triggered_id == 'modal-confirm-delete' and not is_modal_open):
+        from modules.database import get_all_registrations
         logger.info("Poblando/refrescando la tabla de registros Omega.")
         df = get_all_registrations()
+        if not df.empty:
+            df['acciones'] = df['combinacion'].apply(lambda combo_id: f'🗑️')
         return df.to_dict('records')
     return no_update
+
+@app.callback(
+    Output('modal-confirm-delete', 'is_open'),
+    Output('store-record-to-delete', 'data'),
+    Input('table-registros', 'active_cell'),
+    State('table-registros', 'data'),
+    prevent_initial_call=True
+)
+def open_delete_modal(active_cell, data):
+    if active_cell and active_cell['column_id'] == 'acciones':
+        row_index = active_cell['row']
+        combinacion_a_eliminar = data[row_index]['combinacion']
+        logger.info(f"Solicitud para eliminar la combinación: {combinacion_a_eliminar}")
+        return True, combinacion_a_eliminar
+    return False, no_update
+
+@app.callback(
+    Output('modal-confirm-delete', 'is_open', allow_duplicate=True),
+    Output("notification-container", "children", allow_duplicate=True),
+    Input('btn-confirm-delete', 'n_clicks'),
+    State('store-record-to-delete', 'data'),
+    prevent_initial_call=True
+)
+def confirm_delete_record(n_clicks, combinacion_a_eliminar):
+    if not fue_un_clic_real('btn-confirm-delete'): return no_update, no_update
+    from modules.database import delete_registration
+    if not combinacion_a_eliminar: return False, dbc.Alert("Error: No hay registro seleccionado.", color="danger")
+    success, message = delete_registration(combinacion_a_eliminar)
+    color = "success" if success else "danger"
+    return False, dbc.Alert(message, color=color, duration=4000)
+
+@app.callback(
+    Output('modal-confirm-delete', 'is_open', allow_duplicate=True),
+    Input('btn-cancel-delete', 'n_clicks'),
+    prevent_initial_call=True
+)
+def cancel_delete(n_clicks):
+    if not fue_un_clic_real('btn-cancel-delete'): return no_update
+    return False
+
+# La funcionalidad de edición en la tabla es compleja y se deja para una futura iteración.
+# @app.callback(...)
+# def handle_table_edit(...)
 
 if __name__ == "__main__":
     logger.info("Iniciando servidor (Debug OFF).")

@@ -101,7 +101,29 @@ def create_layout():
     )
 
 def create_registros_view():
+    """Crea la vista para el visor/editor de registros Omega."""
+    
+    # --- Modal de Confirmación de Eliminación ---
+    # Estará oculto hasta que se active por un callback.
+    confirmation_modal = dbc.Modal(
+        [
+            dbc.ModalHeader("Confirmar Eliminación"),
+            dbc.ModalBody("¿Estás seguro de que quieres eliminar este registro? Esta acción no se puede deshacer."),
+            dbc.ModalFooter([
+                dbc.Button("Cancelar", id="btn-cancel-delete", className="ms-auto", n_clicks=0),
+                dbc.Button("Confirmar Eliminación", id="btn-confirm-delete", color="danger", n_clicks=0),
+            ]),
+        ],
+        id="modal-confirm-delete",
+        is_open=False, # Inicia cerrado
+    )
+
     return html.Div([
+        # --- Almacenamiento Oculto para la fila a eliminar ---
+        # Guardaremos aquí el ID de la combinación a eliminar.
+        dcc.Store(id='store-record-to-delete', data=None),
+        confirmation_modal, # <-- Añadimos el modal al layout
+
         html.H3("Registro de Combinaciones Omega", className="text-center text-dark mb-4"),
         dbc.Row(dbc.Col(
             dbc.Button("Refrescar Datos", id="btn-refresh-registros", className="mb-3", color="primary", outline=True)
@@ -114,8 +136,11 @@ def create_registros_view():
                 {'name': 'Nombre Completo', 'id': 'nombre_completo', 'editable': True},
                 {'name': 'Móvil', 'id': 'movil', 'editable': True},
                 {'name': 'Fecha de Registro', 'id': 'fecha_registro', 'editable': False},
+                # --- NUEVA COLUMNA DE ACCIONES ---
+                # Usamos 'presentation': 'markdown' para poder renderizar HTML/botones
+                {'name': 'Acciones', 'id': 'acciones', 'type': 'text', 'presentation': 'markdown', 'editable': False},
             ],
-            data=[], # Se poblará con un callback
+            data=[],
             page_size=15,
             style_cell={'textAlign': 'center', 'fontFamily': 'sans-serif'},
             style_header={'fontWeight': 'bold'},

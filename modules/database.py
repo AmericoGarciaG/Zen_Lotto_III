@@ -233,3 +233,30 @@ def update_registration(combinacion, new_data):
     finally:
         if conn:
             conn.close()
+
+# ... (importaciones y funciones existentes) ...
+
+def delete_registration(combinacion_str):
+    """Elimina un registro de la tabla de registros Omega por su PK."""
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.cursor()
+        query = f"DELETE FROM {TABLE_NAME_REGISTROS} WHERE combinacion = ?"
+        cursor.execute(query, (combinacion_str,))
+        conn.commit()
+        
+        # Verificamos si realmente se borró una fila
+        if cursor.rowcount > 0:
+            logger.info(f"Registro eliminado para la combinación {combinacion_str}")
+            return True, "Registro eliminado con éxito."
+        else:
+            logger.warning(f"Se intentó eliminar una combinación no existente: {combinacion_str}")
+            return False, "El registro no fue encontrado (quizás ya fue eliminado)."
+
+    except Exception as e:
+        logger.error(f"Error al eliminar registro: {e}", exc_info=True)
+        return False, "Ocurrió un error inesperado al eliminar."
+    finally:
+        if conn:
+            conn.close()
