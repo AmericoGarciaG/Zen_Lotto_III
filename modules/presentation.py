@@ -1,6 +1,6 @@
 import dash_bootstrap_components as dbc
 from dash import html, dcc, dash_table
-import plotly.graph_objects as go # Necesitaremos plotly para los gráficos
+import plotly.graph_objects as go
 
 def create_header():
     return html.Div(
@@ -18,7 +18,6 @@ def create_navigation():
                 dbc.ButtonGroup(
                     [
                         dbc.Button("GENERADOR OMEGA", id="btn-nav-generador", className="nav-button"),
-                        # --- BOTÓN DE GRÁFICOS HABILITADO ---
                         dbc.Button("GRÁFICOS Y ESTADÍSTICAS", id="btn-nav-graficos", className="nav-button"),
                         dbc.Button("VISOR DE HISTÓRICOS", id="btn-nav-historicos", className="nav-button"),
                         dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"),
@@ -59,11 +58,13 @@ def create_generador_view():
 
 def create_configuracion_view():
     return html.Div([
-        html.H3("Configuración", className="text-center text-dark mb-4"),
+        html.H3("Configuración y Mantenimiento", className="text-center text-dark mb-4"),
         dbc.Row([
-            dbc.Col(dbc.Button("ACTUALIZAR HISTÓRICO", id="btn-gen-historico", color="dark", className="action-button"), width="auto"),
-            dbc.Col(dbc.Button("ACTUALIZAR FRECUENCIAS", id="btn-gen-omega", color="dark", className="action-button"), width="auto"),
-            dbc.Col(dbc.Button("PRE-GENERAR CLASE OMEGA", id="btn-pregen-omega", color="dark", className="action-button"), width="auto"),
+            dbc.Col(dbc.Button("1. ACTUALIZAR HISTÓRICO", id="btn-gen-historico", color="dark", className="action-button"), width="auto"),
+            dbc.Col(dbc.Button("2. ACTUALIZAR FRECUENCIAS", id="btn-gen-omega", color="dark", className="action-button"), width="auto"),
+            dbc.Col(dbc.Button("3. OPTIMIZAR UMBRALES (ML)", id="btn-optimize-thresholds", color="primary", className="action-button"), width="auto"),
+            # --- BOTÓN COMBINADO ---
+            dbc.Col(dbc.Button("4. ENRIQUECER Y PRE-GENERAR", id="btn-enrich-pregen", color="dark", className="action-button"), width="auto"),
         ], justify="center", className="g-3")
     ])
 
@@ -111,29 +112,21 @@ def create_historicos_view():
         )
     ])
 
-# --- NUEVA FUNCIÓN PARA LA VISTA DE GRÁFICOS ---
 def create_graficos_view():
-    """Crea el layout para la pestaña de Gráficos y Estadísticas."""
-    # Estructura de la tarjeta para cada gráfico
     def create_graph_card(graph_id, title):
         return dbc.Card([
             dbc.CardHeader(html.H5(title, className="mb-0")),
             dbc.CardBody(dcc.Graph(id=graph_id)),
         ], className="mb-4")
-
     return html.Div([
         html.H3("Gráficos y Estadísticas", className="text-center text-dark mb-4"),
-        dbc.Row(dbc.Col(
-            dbc.Button("Generar/Refrescar Gráficos", id="btn-refresh-graficos", className="mb-3", color="primary")
-        ), justify="end"),
-        
+        dbc.Row(dbc.Col(dbc.Button("Generar/Refrescar Gráficos", id="btn-refresh-graficos", className="mb-3", color="primary")), justify="end"),
         dbc.Row([
             dbc.Col(create_graph_card('graph-universo', 'Clase Omega vs. Universo Total'), md=4),
             dbc.Col(create_graph_card('graph-historico', 'Clase Omega en Sorteos Históricos'), md=4),
             dbc.Col(create_graph_card('graph-ganadores', 'Clase Omega en Sorteos con Premio'), md=4),
         ])
     ])
-
 
 def create_layout():
     return dbc.Container(

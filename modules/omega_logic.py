@@ -57,33 +57,70 @@ def evaluate_combination(combination, freqs):
 def C(n, k): return factorial(n) // (factorial(k) * factorial(n - k))
 
 def calculate_and_save_frequencies():
+    """
+    Orquesta el cálculo de frecuencias. Su única responsabilidad es
+    leer el histórico y generar/actualizar el archivo de frecuencias.
+    """
     logger.info("Iniciando el cálculo/actualización de frecuencias.")
+    
     state = state_manager.get_state()
     last_processed_concurso = state.get("last_concurso_for_freqs", 0)
+
     df_historico = db.read_historico_from_db()
-    if df_historico.empty: return False, "La base de datos está vacía."
+    if df_historico.empty:
+        return False, "La base de datos está vacía. Ejecute 'Actualizar Histórico' primero."
+
     df_new_draws = df_historico[df_historico['concurso'] > last_processed_concurso].copy()
-    if df_new_draws.empty: return True, "Las frecuencias ya están actualizadas."
+    
+    if df_new_draws.empty:
+        message = "No hay sorteos nuevos para procesar. Las frecuencias ya están actualizadas."
+        logger.info(message)
+        return True, message
+
+    # Carga las frecuencias existentes o crea contadores vacíos
     freqs_data = get_frequencies() or {}
-    freq_pairs, freq_triplets, freq_quartets = Counter(freqs_data.get("pares", {})), Counter(freqs_data.get("tercias", {})), Counter(freqs_data.get("cuartetos", {}))
+    freq_pairs = Counter(freqs_data.get("pares", {}))
+    freq_triplets = Counter(freqs_data.get("tercias", {}))
+    freq_quartets = Counter(freqs_data.get("cuartetos", {}))
+    
+    logger.info(f"Se procesarán {len(df_new_draws)} sorteos nuevos para calcular frecuencias.")
     all_new_pairs, all_new_triplets, all_new_quartets = [], [], []
+    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+    
     for _, row in df_new_draws.iterrows():
-        draw = sorted([row[col] for col in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']])
+        draw = sorted([int(row[col]) for col in result_columns])
         all_new_pairs.extend(list(combinations(draw, 2)))
         all_new_triplets.extend(list(combinations(draw, 3)))
         all_new_quartets.extend(list(combinations(draw, 4)))
-    freq_pairs.update(all_new_pairs); freq_triplets.update(all_new_triplets); freq_quartets.update(all_new_quartets)
+
+    freq_pairs.update(all_new_pairs)
+    freq_triplets.update(all_new_triplets)
+    freq_quartets.update(all_new_quartets)
+    
     new_last_processed_concurso = int(df_new_draws['concurso'].max())
-    output_data = {"FREQ_PARES": {str(k): v for k, v in freq_pairs.items()}, "FREQ_TERCIAS": {str(k): v for k, v in freq_triplets.items()}, "FREQ_CUARTETOS": {str(k): v for k, v in freq_quartets.items()}}
+
+    # La data para el JSON de frecuencias no cambia
+    output_data = {
+        "FREQ_PARES": {str(k): v for k, v in freq_pairs.items()},
+        "FREQ_TERCIAS": {str(k): v for k, v in freq_triplets.items()},
+        "FREQ_CUARTETOS": {str(k): v for k, v in freq_quartets.items()}
+    }
+
     try:
-        with open(config.FREQUENCIES_FILE, 'w', encoding='utf-8') as f: json.dump(output_data, f, indent=4)
+        with open(config.FREQUENCIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, indent=4, ensure_ascii=False)
+        
+        # Actualizamos el estado central y lo guardamos
         state["last_concurso_for_freqs"] = new_last_processed_concurso
         state_manager.save_state(state)
-        logger.info("Frecuencias actualizadas. Procediendo a enriquecer el histórico...")
-        success_enrich, message_enrich = enrich_historical_data()
-        if not success_enrich: return False, message_enrich
-        return True, f"Frecuencias y datos históricos enriquecidos con {len(df_new_draws)} nuevos sorteos."
-    except Exception as e: return False, f"Error al guardar archivo de frecuencias: {e}"
+
+        message = f"Frecuencias actualizadas con éxito usando {len(df_new_draws)} nuevos sorteos."
+        logger.info(message)
+        return True, message
+    except Exception as e:
+        message = f"Error al guardar el archivo de frecuencias actualizado: {e}"
+        logger.error(message, exc_info=True)
+        return False, message
 
 def pregenerate_omega_class():
     logger.info("Verificando si la pre-generación es necesaria...")
