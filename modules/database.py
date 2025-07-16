@@ -2,12 +2,14 @@ import sqlite3
 import pandas as pd
 import logging
 import config
+import json
 
 logger = logging.getLogger(__name__)
 
 TABLE_NAME_HISTORICO = "historico"
 TABLE_NAME_OMEGA = "omega_class"
 TABLE_NAME_REGISTROS = "registros_omega"
+REGISTROS_BACKUP_FILE = "registros_omega_backup.json"
 
 def save_historico_to_db(df, mode='replace'):
     """
@@ -161,4 +163,63 @@ def count_omega_class():
         return count
     except (pd.errors.DatabaseError, IndexError, Exception):
         if conn: conn.close()
-        return 0
+        return 0  
+
+def export_registrations_to_json():
+    """Lee todos los registros y los guarda en un archivo JSON de respaldo."""
+    try:
+        df = get_all_registrations()
+        if df.empty:
+            return False, "No hay registros para exportar."
+        
+        # Convertimos la fecha a string para que sea serializable en JSON
+        if 'fecha_registro' in df.columns:
+            df['fecha_registro'] = df['fecha_registro'].astype(str)
+
+        df.to_json(REGISTROS_BACKUP_FILE, orient='records', indent=4)
+        logger.info(f"Se han exportado {len(df)} registros a '{REGISTROS_BACKUP_FILE}'")
+        return True, f"Se han exportado {len(df)} registros con éxito."
+    except Exception as e:
+        logger.error(f"Error al exportar registros: {e}", exc_info=True)
+        return False, "Ocurrió un error durante la exportación."
+
+def import_registrations_from_json(overwrite=False):
+    """Importa registros desde un archivo JSON, con opción de sobrescribir."""
+    try:
+        with open(REGISTROS_BACKUP_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return 0, 0, 0, "No se encontró el archivo de respaldo 'registros_omega_backup.json'."
+    
+    conn = sqlite3.connect(config.DB_FILE)
+    cursor = conn.cursor()
+    
+    added_count = 0
+    updated_count = 0
+    
+    for record in data:
+        combo_str = record.get('combinacion')
+        nombre = record.get('nombre_completo')
+        movil = record.get('movil')
+        fecha = record.get('fecha_registro')
+
+        if not all([combo_str, nombre, movil]):
+            continue # Ignora registros incompletos
+
+        try:
+            query = f"INSERT INTO {TABLE_NAME_REGISTROS} (combinacion, nombre_completo, movil, fecha_registro) VALUES (?, ?, ?, ?)"
+            cursor.execute(query, (combo_str, nombre, movil, fecha))
+            added_count += 1
+        except sqlite3.IntegrityError:
+            # El registro ya existe
+            if overwrite:
+                update_query = f"UPDATE {TABLE_NAME_REGISTROS} SET nombre_completo = ?, movil = ? WHERE combinacion = ?"
+                cursor.execute(update_query, (nombre, movil, combo_str))
+                updated_count += 1
+
+    conn.commit()
+    conn.close()
+    
+    message = f"Importación finalizada. {added_count} registros añadidos, {updated_count} actualizados."
+    logger.info(message)
+    return added_count, updated_count, len(data), message

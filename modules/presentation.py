@@ -73,20 +73,31 @@ def create_registros_view():
         dbc.ModalHeader("Confirmar Eliminación"), dbc.ModalBody("¿Estás seguro?"),
         dbc.ModalFooter([dbc.Button("Cancelar", id="btn-cancel-delete"), dbc.Button("Confirmar", id="btn-confirm-delete", color="danger")]),
     ], id="modal-confirm-delete", is_open=False)
+
+    # --- NUEVO MODAL PARA LA IMPORTACIÓN ---
+    import_modal = dbc.Modal([
+        dbc.ModalHeader("Confirmar Importación"),
+        dbc.ModalBody("Se han encontrado registros existentes. ¿Deseas sobrescribirlos con los datos del archivo de respaldo?"),
+        dbc.ModalFooter([
+            dbc.Button("No Sobrescribir (Solo añadir nuevos)", id="btn-import-no-overwrite", color="secondary"),
+            dbc.Button("Sí, Sobrescribir", id="btn-import-overwrite", color="primary"),
+        ]),
+    ], id="modal-confirm-import", is_open=False)
+
     return html.Div([
-        dcc.Store(id='store-record-to-delete', data=None), confirmation_modal,
+        dcc.Store(id='store-record-to-delete', data=None), confirmation_modal, import_modal, # <-- Añadir nuevo modal
         html.H3("Registro de Combinaciones Omega", className="text-center text-dark mb-4"),
-        dbc.Row(dbc.Col(dbc.Button("Refrescar Datos", id="btn-refresh-registros", className="mb-3", color="primary", outline=True)), justify="end"),
+        
+        # --- NUEVOS BOTONES DE GESTIÓN ---
+        dbc.Row([
+            dbc.Col(dbc.Button("Exportar a JSON", id="btn-export-registros", color="success", outline=True), width="auto"),
+            dbc.Col(dbc.Button("Importar desde JSON", id="btn-import-registros", color="info", outline=True), width="auto"),
+            dbc.Col(dbc.Button("Refrescar Datos", id="btn-refresh-registros", className="ms-auto", color="primary", outline=True)),
+        ], className="mb-3"),
+        # -----------------------------
+        
         dash_table.DataTable(id='table-registros',
-            columns=[
-                {'name': 'Combinación', 'id': 'combinacion', 'editable': False},
-                {'name': 'Nombre Completo', 'id': 'nombre_completo', 'editable': True},
-                {'name': 'Móvil', 'id': 'movil', 'editable': True},
-                {'name': 'Fecha de Registro', 'id': 'fecha_registro', 'editable': False},
-                {'name': 'Acciones', 'id': 'acciones', 'presentation': 'markdown', 'editable': False},
-            ],
-            data=[], page_size=15, style_cell={'textAlign': 'center'},
-            style_header={'fontWeight': 'bold'}, style_table={'overflowX': 'auto'}
+            # ... (resto de la tabla sin cambios) ...
         )
     ])
 

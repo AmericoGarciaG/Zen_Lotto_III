@@ -436,6 +436,51 @@ def update_all_graphs(n_clicks):
     
     return fig_universo, fig_historico, fig_ganadores, fig_scatter, None
 
+@app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Input("btn-export-registros", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_export_registros(n_clicks):
+    if not fue_un_clic_real('btn-export-registros'):
+        return no_update
+    
+    from modules.database import export_registrations_to_json
+    logger.info("Iniciando exportación de registros.")
+    success, message = export_registrations_to_json()
+    color = "success" if success else "danger"
+    
+    return dbc.Alert(message, color=color, duration=5000)
+
+@app.callback(
+    Output("modal-confirm-import", "is_open"),
+    Input("btn-import-registros", "n_clicks"),
+    prevent_initial_call=True
+)
+def open_import_modal(n_clicks):
+    if fue_un_clic_real('btn-import-registros'):
+        return True
+    return False
+
+@app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Output("modal-confirm-import", "is_open", allow_duplicate=True),
+    Input("btn-import-overwrite", "n_clicks"),
+    Input("btn-import-no-overwrite", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_import_registros(overwrite_clicks, no_overwrite_clicks):
+    from modules.database import import_registrations_from_json
+    
+    # Determinamos si el usuario quiere sobrescribir
+    overwrite = ctx.triggered_id == 'btn-import-overwrite'
+    
+    logger.info(f"Iniciando importación de registros con overwrite={overwrite}")
+    added, updated, total, message = import_registrations_from_json(overwrite=overwrite)
+    
+    # Cerramos el modal y mostramos el resultado
+    return dbc.Alert(message, color="success", duration=8000), False
+
 
 if __name__ == "__main__":
     logger.info("Iniciando servidor (Debug OFF).")
