@@ -113,18 +113,35 @@ def create_historicos_view():
     ])
 
 def create_graficos_view():
+    """Crea el layout para la pestaña de Gráficos y Estadísticas."""
     def create_graph_card(graph_id, title):
         return dbc.Card([
             dbc.CardHeader(html.H5(title, className="mb-0")),
             dbc.CardBody(dcc.Graph(id=graph_id)),
         ], className="mb-4")
+
     return html.Div([
         html.H3("Gráficos y Estadísticas", className="text-center text-dark mb-4"),
-        dbc.Row(dbc.Col(dbc.Button("Generar/Refrescar Gráficos", id="btn-refresh-graficos", className="mb-3", color="primary")), justify="end"),
+        dbc.Row(dbc.Col(
+            dbc.Button("Generar/Refrescar Gráficos", id="btn-refresh-graficos", className="mb-3", color="primary")
+        ), justify="end"),
+        
+        # Fila de los gráficos de dona
         dbc.Row([
             dbc.Col(create_graph_card('graph-universo', 'Clase Omega vs. Universo Total'), md=4),
             dbc.Col(create_graph_card('graph-historico', 'Clase Omega en Sorteos Históricos'), md=4),
             dbc.Col(create_graph_card('graph-ganadores', 'Clase Omega en Sorteos con Premio'), md=4),
+        ]),
+
+        # --- NUEVA FILA PARA EL GRÁFICO DE DISPERSIÓN ---
+        dbc.Row([
+            dbc.Col(
+                dbc.Card([
+                    dbc.CardHeader(html.H5("Omega Score vs. Bolsa Acumulada (Sorteos Ganadores)", className="mb-0")),
+                    dbc.CardBody(dcc.Graph(id='graph-scatter-score-bolsa')),
+                ]),
+                width=12 # Ocupa todo el ancho
+            )
         ])
     ])
 

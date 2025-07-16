@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import numpy as np
 import importlib
 import config
+import plotly.express as px
 
 setup_logger()
 logger = logging.getLogger(__name__)
@@ -358,34 +359,37 @@ def populate_historicos_table(refresh_clicks, nav_clicks):
     Output('graph-universo', 'figure'),
     Output('graph-historico', 'figure'),
     Output('graph-ganadores', 'figure'),
+    Output('graph-scatter-score-bolsa', 'figure'),
     Output('notification-container', 'children', allow_duplicate=True),
     Input('btn-refresh-graficos', 'n_clicks'),
     prevent_initial_call=True
 )
 def update_all_graphs(n_clicks):
     if not fue_un_clic_real('btn-refresh-graficos'):
-        return no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update
         
     from modules.database import read_historico_from_db, count_omega_class
     from modules.omega_logic import C
     
+    logger.info("Generando/refrescando todos los gráficos.")
     empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+
+    # --- Lógica para los gráficos de dona (sin cambios) ---
     total_omega_class = count_omega_class()
-    
     if not isinstance(total_omega_class, (int, float, np.integer)):
-        return empty_fig, empty_fig, empty_fig, dbc.Alert("Error de tipo en datos.", color="danger")
+        return empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Error de tipo en datos.", color="danger")
     
     total_omega_class_int = int(total_omega_class)
-    
     if total_omega_class_int == 0:
-        return empty_fig, empty_fig, empty_fig, dbc.Alert("La Clase Omega no ha sido pre-generada.", color="warning")
+        msg = dbc.Alert("La Clase Omega no ha sido pre-generada.", color="warning")
+        return empty_fig, empty_fig, empty_fig, empty_fig, msg
     
-    total_posibles = C(39, 6)
-    fig_universo = create_donut_chart([total_omega_class_int, total_posibles - total_omega_class_int], ['Clase Omega', 'Otras'], 'Universo')
+    fig_universo = create_donut_chart([total_omega_class_int, C(39, 6) - total_omega_class_int], ['Clase Omega', 'Otras'], 'Universo')
     
     df_historico = read_historico_from_db()
     if df_historico.empty:
-        return no_update, empty_fig, empty_fig, dbc.Alert("El histórico está vacío.", color="warning")
+        msg = dbc.Alert("El histórico está vacío.", color="warning")
+        return no_update, empty_fig, empty_fig, empty_fig, msg
 
     historico_counts = df_historico['es_omega'].value_counts()
     fig_historico = create_donut_chart([historico_counts.get(1, 0), historico_counts.get(0, 0)], ['Omega', 'No Omega'], 'Sorteos Históricos')
@@ -394,7 +398,43 @@ def update_all_graphs(n_clicks):
     ganadores_counts = df_ganadores['es_omega'].value_counts()
     fig_ganadores = create_donut_chart([ganadores_counts.get(1, 0), ganadores_counts.get(0, 0)], ['Omega', 'No Omega'], 'Sorteos con Premio')
     
-    return fig_universo, fig_historico, fig_ganadores, None
+    # --- LÓGICA MODIFICADA PARA EL GRÁFICO DE DISPERSIÓN ---
+    df_scatter = df_ganadores.copy()
+    if df_scatter.empty:
+        fig_scatter = empty_fig.update_layout(title_text="No hay sorteos con premio mayor en el histórico")
+    else:
+        # 1. Crear la columna para el color condicional
+        df_scatter['Clase'] = df_scatter['es_omega'].apply(lambda x: 'Omega' if x == 1 else 'No Omega')
+        
+        # 2. Crear columna de texto para el hover
+        result_cols = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+        df_scatter['combinacion_str'] = df_scatter[result_cols].astype(str).agg('-'.join, axis=1)
+        
+        # 3. Crear el gráfico usando el parámetro 'color'
+        fig_scatter = px.scatter(
+            df_scatter,
+            x="omega_score",
+            y="bolsa",
+            color="Clase",  # <-- Aquí está la magia
+            color_discrete_map={ # <-- Definimos los colores
+                'Omega': '#3b71ca',      # Azul ZenLotto para los Omega
+                'No Omega': '#dc3545'  # Un rojo de peligro para los No Omega
+            },
+            template="simple_white", # Un tema limpio y claro
+            title="Comparativa de Sorteos con Premio Mayor",
+            labels={"omega_score": "Omega Score", "bolsa": "Bolsa Acumulada (MXN)"},
+            hover_data=['concurso', 'fecha', 'combinacion_str']
+        )
+        
+        # 4. Mejoras visuales adicionales
+        fig_scatter.update_layout(
+            title_x=0.5,
+            legend_title_text='',
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        fig_scatter.update_traces(marker=dict(size=10, opacity=0.7, line=dict(width=1, color='DarkSlateGrey')))
+    
+    return fig_universo, fig_historico, fig_ganadores, fig_scatter, None
 
 
 if __name__ == "__main__":
