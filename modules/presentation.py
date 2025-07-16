@@ -42,6 +42,21 @@ def create_generador_view():
         dbc.Button(html.I(className="fas fa-trash-alt"), id="btn-clear-inputs", color="secondary", outline=True, className="ms-2"),
         width="auto", className="d-flex align-items-center"
     )
+
+    analysis_result_card = dbc.Card(
+        dbc.CardBody([
+            html.H4(id='analysis-title', className="card-title"),
+            html.P(id='analysis-combination-text'),
+            html.Hr(),
+            html.P(id='analysis-score-text'),
+            html.Ul(id='analysis-details-list', className='list-unstyled')
+        ]),
+        id='analysis-result-card',
+        # La clase se asignará dinámicamente, quitamos el color fijo
+        className="mt-4", 
+        style={'display': 'none'}
+    )
+
     return html.Div([
         dcc.Store(id='store-validated-omega', data=None),
         dbc.Row(number_inputs + [clear_button], justify="center", align="center", className="mb-5 g-2"),
@@ -49,6 +64,7 @@ def create_generador_view():
             dbc.Col(dbc.Button("ANALIZAR COMBINACIÓN", id="btn-analizar", color="dark", className="action-button"), width="auto"),
             dbc.Col(dbc.Button("GENERAR OMEGA / AJUSTAR", id="btn-generar", color="dark", className="action-button"), width="auto"),
         ], justify="center", align="center", className="g-3 mb-4"),
+        dbc.Row(dbc.Col(analysis_result_card, width=12, md=8, lg=6), justify="center"),
         html.Div([
             dbc.Row(dbc.Col(dcc.Input(id="input-nombre", placeholder="Nombre Completo", className="form-control", disabled=True), width=8, md=6, lg=5, xl=4), justify="center", className="mb-3"),
             dbc.Row(dbc.Col(dcc.Input(id="input-movil", placeholder="Número de Móvil", type="tel", className="form-control", disabled=True), width=8, md=6, lg=5, xl=4), justify="center", className="mb-4"),

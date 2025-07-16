@@ -36,17 +36,40 @@ def _calculate_subsequence_affinity(combination, freqs, size):
     return total_affinity
 
 def evaluate_combination(combination, freqs):
-    if len(set(combination)) != 6: return {"error": "La combinación debe tener 6 números únicos."}
+    """
+    Evalúa una combinación de 6 números, calcula afinidades y el Score Omega,
+    y devuelve siempre un diccionario completo.
+    """
+    if not isinstance(combination, list) or len(set(combination)) != 6:
+        return {"error": "La entrada debe ser una lista de 6 números únicos."}
+
+    # --- Cálculo de Afinidades ---
     afinidad_pares = _calculate_subsequence_affinity(combination, freqs, 2)
     afinidad_tercias = _calculate_subsequence_affinity(combination, freqs, 3)
     afinidad_cuartetos = _calculate_subsequence_affinity(combination, freqs, 4)
+
+    # --- Evaluación de Criterios Omega ---
     cumple_pares = afinidad_pares >= config.UMBRAL_PARES
     cumple_tercias = afinidad_tercias >= config.UMBRAL_TERCIAS
     cumple_cuartetos = afinidad_cuartetos >= config.UMBRAL_CUARTETOS
     es_omega = sum([cumple_pares, cumple_tercias, cumple_cuartetos]) == 3
+    
+    # --- CÁLCULO UNIVERSAL DEL OMEGA SCORE ---
+    score_q = ((afinidad_cuartetos - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
+    score_t = ((afinidad_tercias - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
+    score_p = ((afinidad_pares - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
+    omega_score = score_q + score_t + score_p
+    # ----------------------------------------
+
+    # --- DICCIONARIO DE RETORNO COMPLETO ---
     return {
-        "error": None, "esOmega": es_omega, "combinacion": sorted(combination),
-        "afinidadPares": afinidad_pares, "afinidadTercias": afinidad_tercias, "afinidadCuartetos": afinidad_cuartetos,
+        "error": None,
+        "esOmega": es_omega,
+        "omegaScore": omega_score, # <-- La clave que faltaba
+        "combinacion": sorted(combination),
+        "afinidadPares": afinidad_pares,
+        "afinidadTercias": afinidad_tercias,
+        "afinidadCuartetos": afinidad_cuartetos,
         "criterios": {
             "pares": {"cumple": cumple_pares, "score": afinidad_pares, "umbral": config.UMBRAL_PARES},
             "tercias": {"cumple": cumple_tercias, "score": afinidad_tercias, "umbral": config.UMBRAL_TERCIAS},
