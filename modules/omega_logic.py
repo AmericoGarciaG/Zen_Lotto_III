@@ -10,7 +10,7 @@ from utils import state_manager
 
 logger = logging.getLogger(__name__)
 
-# --- (Omitiendo funciones auxiliares que no cambian por brevedad) ---
+# --- (Las funciones auxiliares como get_frequencies, evaluate_combination, etc., no cambian) ---
 _frequencies_cache = None
 def get_frequencies():
     global _frequencies_cache
@@ -23,8 +23,7 @@ def get_frequencies():
             "cuartetos": {eval(k): v for k, v in data.get("FREQ_CUARTETOS", {}).items()}
         }
         return _frequencies_cache
-    except FileNotFoundError: return None
-    except Exception: return None
+    except (FileNotFoundError, json.JSONDecodeError): return None
 
 def _calculate_subsequence_affinity(combination, freqs, size):
     key_map = {2: "pares", 3: "tercias", 4: "cuartetos"}
@@ -36,114 +35,91 @@ def _calculate_subsequence_affinity(combination, freqs, size):
     return total_affinity
 
 def evaluate_combination(combination, freqs):
-    """
-    Evalúa una combinación de 6 números, calcula afinidades y el Score Omega,
-    y devuelve siempre un diccionario completo.
-    """
-    if not isinstance(combination, list) or len(set(combination)) != 6:
-        return {"error": "La entrada debe ser una lista de 6 números únicos."}
-
-    # --- Cálculo de Afinidades ---
-    afinidad_pares = _calculate_subsequence_affinity(combination, freqs, 2)
-    afinidad_tercias = _calculate_subsequence_affinity(combination, freqs, 3)
-    afinidad_cuartetos = _calculate_subsequence_affinity(combination, freqs, 4)
-
-    # --- Evaluación de Criterios Omega ---
-    cumple_pares = afinidad_pares >= config.UMBRAL_PARES
-    cumple_tercias = afinidad_tercias >= config.UMBRAL_TERCIAS
-    cumple_cuartetos = afinidad_cuartetos >= config.UMBRAL_CUARTETOS
-    es_omega = sum([cumple_pares, cumple_tercias, cumple_cuartetos]) == 3
-    
-    # --- CÁLCULO UNIVERSAL DEL OMEGA SCORE ---
-    score_q = ((afinidad_cuartetos - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
-    score_t = ((afinidad_tercias - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
-    score_p = ((afinidad_pares - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
-    omega_score = score_q + score_t + score_p
-    # ----------------------------------------
-
-    # --- DICCIONARIO DE RETORNO COMPLETO ---
+    if not isinstance(combination, list) or len(set(combination)) != 6: return {"error": "Entrada inválida."}
+    af_p = _calculate_subsequence_affinity(combination, freqs, 2)
+    af_t = _calculate_subsequence_affinity(combination, freqs, 3)
+    af_q = _calculate_subsequence_affinity(combination, freqs, 4)
+    c_p = af_p >= config.UMBRAL_PARES
+    c_t = af_t >= config.UMBRAL_TERCIAS
+    c_q = af_q >= config.UMBRAL_CUARTETOS
+    es_omega = sum([c_p, c_t, c_q]) == 3
+    s_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
+    s_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
+    s_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
     return {
-        "error": None,
-        "esOmega": es_omega,
-        "omegaScore": omega_score, # <-- La clave que faltaba
-        "combinacion": sorted(combination),
-        "afinidadPares": afinidad_pares,
-        "afinidadTercias": afinidad_tercias,
-        "afinidadCuartetos": afinidad_cuartetos,
-        "criterios": {
-            "pares": {"cumple": cumple_pares, "score": afinidad_pares, "umbral": config.UMBRAL_PARES},
-            "tercias": {"cumple": cumple_tercias, "score": afinidad_tercias, "umbral": config.UMBRAL_TERCIAS},
-            "cuartetos": {"cumple": cumple_cuartetos, "score": afinidad_cuartetos, "umbral": config.UMBRAL_CUARTETOS}
-        }
+        "error": None, "esOmega": es_omega, "omegaScore": s_q + s_t + s_p,
+        "combinacion": sorted(combination), "afinidadPares": af_p, "afinidadTercias": af_t, "afinidadCuartetos": af_q,
+        "criterios": {"pares": {"cumple": c_p, "score": af_p, "umbral": config.UMBRAL_PARES},
+                      "tercias": {"cumple": c_t, "score": af_t, "umbral": config.UMBRAL_TERCIAS},
+                      "cuartetos": {"cumple": c_q, "score": af_q, "umbral": config.UMBRAL_CUARTETOS}}
     }
 
 def C(n, k): return factorial(n) // (factorial(k) * factorial(n - k))
 
+# --- FUNCIÓN CORREGIDA ---
 def calculate_and_save_frequencies():
-    """
-    Orquesta el cálculo de frecuencias. Su única responsabilidad es
-    leer el histórico y generar/actualizar el archivo de frecuencias.
-    """
     logger.info("Iniciando el cálculo/actualización de frecuencias.")
-    
     state = state_manager.get_state()
     last_processed_concurso = state.get("last_concurso_for_freqs", 0)
-
     df_historico = db.read_historico_from_db()
-    if df_historico.empty:
-        return False, "La base de datos está vacía. Ejecute 'Actualizar Histórico' primero."
-
+    if df_historico.empty: return False, "La base de datos está vacía."
     df_new_draws = df_historico[df_historico['concurso'] > last_processed_concurso].copy()
-    
-    if df_new_draws.empty:
-        message = "No hay sorteos nuevos para procesar. Las frecuencias ya están actualizadas."
-        logger.info(message)
-        return True, message
-
-    # Carga las frecuencias existentes o crea contadores vacíos
+    if df_new_draws.empty: return True, "Las frecuencias ya están actualizadas."
     freqs_data = get_frequencies() or {}
-    freq_pairs = Counter(freqs_data.get("pares", {}))
-    freq_triplets = Counter(freqs_data.get("tercias", {}))
-    freq_quartets = Counter(freqs_data.get("cuartetos", {}))
-    
-    logger.info(f"Se procesarán {len(df_new_draws)} sorteos nuevos para calcular frecuencias.")
+    freq_pairs, freq_triplets, freq_quartets = Counter(freqs_data.get("pares", {})), Counter(freqs_data.get("tercias", {})), Counter(freqs_data.get("cuartetos", {}))
     all_new_pairs, all_new_triplets, all_new_quartets = [], [], []
-    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-    
     for _, row in df_new_draws.iterrows():
-        draw = sorted([int(row[col]) for col in result_columns])
+        draw = sorted([int(row[col]) for col in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']])
         all_new_pairs.extend(list(combinations(draw, 2)))
         all_new_triplets.extend(list(combinations(draw, 3)))
         all_new_quartets.extend(list(combinations(draw, 4)))
-
-    freq_pairs.update(all_new_pairs)
-    freq_triplets.update(all_new_triplets)
-    freq_quartets.update(all_new_quartets)
-    
+    freq_pairs.update(all_new_pairs); freq_triplets.update(all_new_triplets); freq_quartets.update(all_new_quartets)
     new_last_processed_concurso = int(df_new_draws['concurso'].max())
-
-    # La data para el JSON de frecuencias no cambia
-    output_data = {
-        "FREQ_PARES": {str(k): v for k, v in freq_pairs.items()},
-        "FREQ_TERCIAS": {str(k): v for k, v in freq_triplets.items()},
-        "FREQ_CUARTETOS": {str(k): v for k, v in freq_quartets.items()}
-    }
-
+    output_data = {"FREQ_PARES": {str(k): v for k, v in freq_pairs.items()}, "FREQ_TERCIAS": {str(k): v for k, v in freq_triplets.items()}, "FREQ_CUARTETOS": {str(k): v for k, v in freq_quartets.items()}}
     try:
-        with open(config.FREQUENCIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=4, ensure_ascii=False)
-        
-        # Actualizamos el estado central y lo guardamos
+        with open(config.FREQUENCIES_FILE, 'w', encoding='utf-8') as f: json.dump(output_data, f, indent=4)
         state["last_concurso_for_freqs"] = new_last_processed_concurso
         state_manager.save_state(state)
+        return True, f"Frecuencias actualizadas con éxito usando {len(df_new_draws)} nuevos sorteos."
+    except Exception as e: return False, f"Error al guardar archivo de frecuencias: {e}"
 
-        message = f"Frecuencias actualizadas con éxito usando {len(df_new_draws)} nuevos sorteos."
-        logger.info(message)
-        return True, message
-    except Exception as e:
-        message = f"Error al guardar el archivo de frecuencias actualizado: {e}"
-        logger.error(message, exc_info=True)
-        return False, message
+def enrich_historical_data():
+    logger.info("Iniciando el enriquecimiento de datos históricos...")
+    from modules.database import read_historico_from_db, TABLE_NAME_HISTORICO
+    import sqlite3
+    df_historico = read_historico_from_db()
+    freqs = get_frequencies()
+    if df_historico.empty or freqs is None: return False, "Faltan datos base para enriquecer."
+    if 'omega_score' in df_historico.columns: return True, "El histórico ya estaba enriquecido."
+    resultados_omega = []
+    for _, row in df_historico.iterrows():
+        try: combo = [int(row[col]) for col in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']]
+        except (ValueError, TypeError): continue
+        eval_result = evaluate_combination(combo, freqs)
+        af_q, af_t, af_p, es_omega_val, omega_score = 0, 0, 0, 0, 0.0
+        if isinstance(eval_result, dict) and not eval_result.get("error"):
+            try:
+                af_q, af_t, af_p = int(eval_result.get('afinidadCuartetos', 0)), int(eval_result.get('afinidadTercias', 0)), int(eval_result.get('afinidadPares', 0))
+                es_omega_val = 1 if eval_result.get("esOmega") else 0
+            except (TypeError, ValueError): pass
+        s_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
+        s_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
+        s_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
+        omega_score = s_q + s_t + s_p
+        resultados_omega.append({'concurso': row['concurso'], 'es_omega': es_omega_val, 'omega_score': round(omega_score, 4), 'afinidad_cuartetos': af_q, 'afinidad_tercias': af_t, 'afinidad_pares': af_p})
+    df_omega_stats = pd.DataFrame(resultados_omega)
+    df_historico_sorted = df_historico.sort_values(by='concurso')
+    df_historico_sorted['bolsa_siguiente'] = df_historico_sorted['bolsa'].shift(-1)
+    df_historico_sorted['bolsa_ganada'] = (df_historico_sorted['bolsa_siguiente'] == 5000000).astype(int)
+    cols_to_drop = [col for col in df_omega_stats.columns if col in df_historico_sorted.columns and col != 'concurso']
+    df_historico_to_merge = df_historico_sorted.drop(columns=cols_to_drop)
+    df_enriquecido = pd.merge(df_historico_to_merge, df_omega_stats, on='concurso')
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        df_enriquecido.to_sql(TABLE_NAME_HISTORICO, conn, if_exists='replace', index=False)
+        conn.close()
+        return True, "Datos históricos enriquecidos y guardados correctamente."
+    except Exception as e: return False, f"Error al guardar el histórico enriquecido: {e}"
 
 def pregenerate_omega_class():
     logger.info("Verificando si la pre-generación es necesaria...")
@@ -179,86 +155,3 @@ def adjust_to_omega(user_combo):
         closest_combo = db.find_closest_omega(user_combo, matches)
         if closest_combo: return closest_combo, matches
     return None, 0
-
-# --- FUNCIÓN DE ENRIQUECIMIENTO CON CORRECCIÓN FINAL ---
-def enrich_historical_data():
-    """
-    Calcula todas las métricas, incluyendo el Score Omega universal (positivo/negativo),
-    para el histórico completo y las guarda en la BD.
-    """
-    logger.info("Iniciando el enriquecimiento de datos históricos con Score Omega universal...")
-    
-    from modules.database import read_historico_from_db, TABLE_NAME_HISTORICO
-    import sqlite3
-
-    df_historico = read_historico_from_db()
-    freqs = get_frequencies()
-
-    if df_historico.empty or freqs is None:
-        return False, "No se puede enriquecer el histórico. Faltan datos base."
-
-    # Forzamos el recálculo para asegurar que los datos estén correctos.
-    # if 'omega_score' in df_historico.columns:
-    #     return True, "El histórico ya estaba enriquecido."
-
-    resultados_omega = []
-    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-    
-    for _, row in df_historico.iterrows():
-        try:
-            # Aseguramos que los números del sorteo sean enteros
-            combination = [int(row[col]) for col in result_columns]
-        except (ValueError, TypeError):
-            logger.warning(f"Sorteo {row.get('concurso')} con datos inválidos. Omitiendo.")
-            continue # Saltamos a la siguiente iteración
-
-        eval_result = evaluate_combination(combination, freqs)
-        
-        # Inicializamos con valores seguros
-        af_q, af_t, af_p = 0, 0, 0
-        es_omega_val = 0
-        omega_score = 0.0
-
-        # Verificamos que el resultado de la evaluación sea un diccionario válido
-        if isinstance(eval_result, dict) and not eval_result.get("error"):
-            # Extraemos los valores y los convertimos explícitamente a enteros
-            # Esto elimina cualquier ambigüedad para Pylance
-            af_q = int(eval_result.get('afinidadCuartetos', 0))
-            af_t = int(eval_result.get('afinidadTercias', 0))
-            af_p = int(eval_result.get('afinidadPares', 0))
-            es_omega_val = 1 if eval_result.get("esOmega") else 0
-            
-            # Con las variables garantizadas como enteros, el cálculo es seguro
-            score_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
-            score_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
-            score_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
-            omega_score = score_q + score_t + score_p
-        
-        resultados_omega.append({
-            'concurso': row['concurso'],
-            'es_omega': es_omega_val,
-            'omega_score': round(omega_score, 4),
-            'afinidad_cuartetos': af_q,
-            'afinidad_tercias': af_t,
-            'afinidad_pares': af_p
-        })
-
-    df_omega_stats = pd.DataFrame(resultados_omega)
-    
-    df_historico_sorted = df_historico.sort_values(by='concurso')
-    df_historico_sorted['bolsa_siguiente'] = df_historico_sorted['bolsa'].shift(-1)
-    df_historico_sorted['bolsa_ganada'] = (df_historico_sorted['bolsa_siguiente'] == 5000000).astype(int)
-    
-    cols_to_drop = [col for col in df_omega_stats.columns if col in df_historico_sorted.columns and col != 'concurso']
-    df_historico_to_merge = df_historico_sorted.drop(columns=cols_to_drop)
-
-    df_enriquecido = pd.merge(df_historico_to_merge, df_omega_stats, on='concurso')
-    
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        df_enriquecido.to_sql(TABLE_NAME_HISTORICO, conn, if_exists='replace', index=False)
-        conn.close()
-        logger.info("El enriquecimiento de datos históricos ha finalizado con éxito.")
-        return True, "Datos históricos enriquecidos y guardados correctamente."
-    except Exception as e:
-        return False, f"Error al guardar el histórico enriquecido: {e}"
