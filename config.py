@@ -12,7 +12,7 @@ FREQUENCIES_FILE = "frecuencias.json"
 STATE_FILE = "system_state.json"
 
 # Umbrales para la clasificación Omega
-UMBRAL_PARES = 419
-UMBRAL_TERCIAS = 64
-UMBRAL_CUARTETOS = 15
+UMBRAL_PARES = 420
+UMBRAL_TERCIAS = 65
+UMBRAL_CUARTETOS = 16
 

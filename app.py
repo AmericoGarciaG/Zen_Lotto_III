@@ -6,10 +6,10 @@ from utils.logger_config import setup_logger
 from utils import state_manager
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 import numpy as np
 import importlib
 import config
-import plotly.express as px
 
 setup_logger()
 logger = logging.getLogger(__name__)
@@ -110,47 +110,76 @@ def handle_omega_class_generation(n_clicks):
     success, message = calculate_and_save_frequencies()
     return dbc.Alert(message, color="success" if success else "danger", duration=8000)
 
-@app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-optimize-thresholds", "n_clicks"), prevent_initial_call=True)
+@app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Input("btn-optimize-thresholds", "n_clicks"),
+    prevent_initial_call=True
+)
 def handle_optimize_thresholds(n_clicks):
     if not fue_un_clic_real('btn-optimize-thresholds'): return no_update
+    
     from modules import ml_optimizer, omega_logic, database
-    logger.info("Callback 'handle_optimize_thresholds' disparado por clic real.")
+    
+    logger.info("Callback 'handle_optimize_thresholds' (Versión Manus) disparado.")
     df_historico = database.read_historico_from_db()
     freqs = omega_logic.get_frequencies()
+    
     if df_historico.empty or freqs is None:
-        return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.", color="warning", duration=5000)
+        return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.", color="warning")
+    
     start = time.time()
     success, message, report = ml_optimizer.optimize_thresholds(df_historico, freqs)
     total_time = time.time() - start
+    
     importlib.reload(config)
-    if success and report:
-        new_thr, coverage = report['new_thresholds'], report['coverage']
-        details = f"Nuevos umbrales: P={new_thr['pares']}, T={new_thr['tercias']}, C={new_thr['cuartetos']}. Cobertura: {coverage:.1%}. "
-        instruction = "Para aplicar, re-ejecute '3. Actualizar Frecuencias' y '4. ENRIQUECER Y PRE-GENERAR'."
+    
+    if success and isinstance(report, dict):
+        new_thr = report.get('new_thresholds', {})
+        ch = report.get('cobertura_historica', 0)
+        cu = report.get('cobertura_universal_estimada', 0)
+        
+        details = (
+            f"Nuevos umbrales: P={new_thr.get('pares')}, T={new_thr.get('tercias')}, C={new_thr.get('cuartetos')}. | "
+            f"CH: {ch:.1%} | CU (Estimada): {cu:.2%}"
+        )
+        
+        instruction = "Para aplicar, re-ejecute '4. ENRIQUECER Y PRE-GENERAR'."
         full_message = f"{message} {details} {instruction} (Tiempo: {total_time:.2f}s)"
     else:
         full_message = f"{message} (Tiempo: {total_time:.2f}s)"
-    return dbc.Alert(full_message, color="success" if success else "danger", duration=20000)
+        
+    return dbc.Alert(full_message, color="success" if success else "danger", duration=25000)
 
-@app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-enrich-pregen", "n_clicks"), prevent_initial_call=True)
+@app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Input("btn-enrich-pregen", "n_clicks"),
+    prevent_initial_call=True
+)
 def handle_enrich_and_pregenerate(n_clicks):
     if not fue_un_clic_real('btn-enrich-pregen'): return no_update
     from modules.omega_logic import enrich_historical_data, pregenerate_omega_class
     importlib.reload(config)
+    
     logger.info("Iniciando Fase 1: Enriquecimiento de datos históricos.")
     start_enrich = time.time()
     success_enrich, msg_enrich = enrich_historical_data()
     time_enrich = time.time() - start_enrich
-    if not success_enrich: return dbc.Alert(f"Falló el enriquecimiento de datos: {msg_enrich}", color="danger")
+    
+    if not success_enrich:
+        return dbc.Alert(f"Falló el enriquecimiento de datos: {msg_enrich}", color="danger")
+    
     logger.info("Iniciando Fase 2: Pre-generación de Clase Omega.")
     start_pregen = time.time()
     success_pregen, msg_pregen = pregenerate_omega_class()
     time_pregen = time.time() - start_pregen
-    if not success_pregen: return dbc.Alert(f"Falló la pre-generación: {msg_pregen}", color="danger")
+    
+    if not success_pregen:
+        return dbc.Alert(f"Falló la pre-generación: {msg_pregen}", color="danger")
+
     total_time = time_enrich + time_pregen
     full_message = f"Proceso completado en {total_time:.2f}s. {msg_enrich} {msg_pregen}"
     return dbc.Alert(full_message, color="success", duration=15000)
-
+    
 # --- Callbacks del Generador ---
 @app.callback([Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)] + [Output("notification-container", "children", allow_duplicate=True)] + [Output('store-validated-omega', 'data', allow_duplicate=True)], Input("btn-generar", "n_clicks"), [State(f"num-input-{i}", "value") for i in range(6)], prevent_initial_call=True)
 def handle_generate_omega(n_clicks, *num_inputs):
