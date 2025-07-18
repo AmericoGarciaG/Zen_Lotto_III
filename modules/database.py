@@ -21,7 +21,7 @@ def save_historico_to_db(df, mode='replace'):
     try:
         conn = sqlite3.connect(config.DB_FILE)
         cursor = conn.cursor()
-
+        
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {TABLE_NAME_REGISTROS} (
                 combinacion TEXT PRIMARY KEY, nombre_completo TEXT NOT NULL,
@@ -36,6 +36,19 @@ def save_historico_to_db(df, mode='replace'):
                 PRIMARY KEY (c1, c2, c3, c4, c5, c6)
             );
         """)
+
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS umbrales_trayectoria (
+                ultimo_concurso_usado INTEGER PRIMARY KEY,
+                umbral_pares INTEGER NOT NULL,
+                umbral_tercias INTEGER NOT NULL,
+                umbral_cuartetos INTEGER NOT NULL,
+                cobertura_historica REAL NOT NULL,
+                cobertura_universal_estimada REAL NOT NULL,
+                fecha_calculo DATETIME
+            );
+        """)
+        logger.info(f"Asegurada la existencia de la tabla 'umbrales_trayectoria'.")
         
         df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
         conn.commit()
@@ -223,3 +236,20 @@ def import_registrations_from_json(overwrite=False):
     message = f"Importación finalizada. {added_count} registros añadidos, {updated_count} actualizados."
     logger.info(message)
     return added_count, updated_count, len(data), message
+
+def read_trajectory_data():
+    """Lee la tabla 'umbrales_trayectoria' y la devuelve como un DataFrame."""
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        query = f"SELECT * FROM umbrales_trayectoria ORDER BY ultimo_concurso_usado ASC"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        # --- LOGGING DE DEPURACIÓN ---
+        logger.info(f"Función 'read_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
+        if not df.empty:
+            logger.info("Primeras filas de datos de trayectoria:\n" + df.head().to_string())
+        # ---------------------------
+        return df
+    except (pd.errors.DatabaseError, Exception) as e:
+        logger.error(f"Error en 'read_trajectory_data': {e}", exc_info=True)
+        return pd.DataFrame()

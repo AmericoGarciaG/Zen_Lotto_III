@@ -6,18 +6,19 @@ from utils.logger_config import setup_logger
 from utils import state_manager
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
 import numpy as np
 import importlib
 import config
+import plotly.express as px
 
+# --- CONFIGURACIÓN INICIAL ---
 setup_logger()
 logger = logging.getLogger(__name__)
-
 logger.info("="*50)
 logger.info("INICIO DE LA APLICACIÓN ZEN LOTTO")
 logger.info("="*50)
 
+# --- INICIALIZACIÓN DE DASH ---
 import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc, Input, Output, ctx, State, no_update
@@ -29,9 +30,11 @@ app = dash.Dash(
 )
 server = app.server
 
+# --- LAYOUT ---
 from modules.presentation import create_layout
 app.layout = create_layout()
 
+# --- FUNCIONES DE AYUDA ---
 def fue_un_clic_real(button_id):
     if not ctx.triggered: return False
     triggered_component_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -47,46 +50,50 @@ def create_donut_chart(values, labels, title):
     fig.update_layout(title_text=title, title_x=0.5, showlegend=False, margin=dict(t=50, b=20, l=20, r=20), height=350, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# --- Callbacks de Navegación ---
+# --- CALLBACKS DE NAVEGACIÓN (FORMA EXPLÍCITA Y ROBUSTA) ---
 @app.callback(
     Output("view-content", "children"),
     Input("btn-nav-generador", "n_clicks"),
     Input("btn-nav-graficos", "n_clicks"),
     Input("btn-nav-historicos", "n_clicks"),
+    Input("btn-nav-trayectoria", "n_clicks"),
     Input("btn-nav-registros", "n_clicks"),
     Input("btn-nav-configuracion", "n_clicks"),
 )
-def render_view_content(gen_clicks, graf_clicks, hist_clicks, reg_clicks, conf_clicks):
-    from modules.presentation import create_generador_view, create_configuracion_view, create_registros_view, create_historicos_view, create_graficos_view
+def render_view_content(gen, graf, hist, tray, reg, conf):
+    from modules.presentation import create_generador_view, create_configuracion_view, create_registros_view, create_historicos_view, create_graficos_view, create_trayectoria_view
     triggered_id = ctx.triggered_id or "btn-nav-generador"
     if triggered_id == "btn-nav-configuracion": return create_configuracion_view()
     elif triggered_id == "btn-nav-registros": return create_registros_view()
     elif triggered_id == "btn-nav-historicos": return create_historicos_view()
     elif triggered_id == "btn-nav-graficos": return create_graficos_view()
+    elif triggered_id == "btn-nav-trayectoria": return create_trayectoria_view()
     return create_generador_view()
 
 @app.callback(
     Output("btn-nav-generador", "className"),
     Output("btn-nav-graficos", "className"),
     Output("btn-nav-historicos", "className"),
+    Output("btn-nav-trayectoria", "className"),
     Output("btn-nav-registros", "className"),
     Output("btn-nav-configuracion", "className"),
     Input("btn-nav-generador", "n_clicks"),
     Input("btn-nav-graficos", "n_clicks"),
     Input("btn-nav-historicos", "n_clicks"),
+    Input("btn-nav-trayectoria", "n_clicks"),
     Input("btn-nav-registros", "n_clicks"),
     Input("btn-nav-configuracion", "n_clicks"),
 )
-def update_nav_buttons_style(gen_clicks, graf_clicks, hist_clicks, reg_clicks, conf_clicks):
+def update_nav_buttons_style(gen, graf, hist, tray, reg, conf):
     triggered_id = ctx.triggered_id or "btn-nav-generador"
     base_class = "nav-button"
-    styles = {"generador": base_class, "graficos": base_class, "historicos": base_class, "registros": base_class, "configuracion": base_class}
+    styles = {"generador": base_class, "graficos": base_class, "historicos": base_class, "trayectoria": base_class, "registros": base_class, "configuracion": base_class}
     active_view = triggered_id.replace("btn-nav-", "")
     if active_view in styles: styles[active_view] += " active"
     else: styles['generador'] += " active"
     return tuple(styles.values())
 
-# --- Callbacks de Configuración ---
+# --- CALLBACKS DE CONFIGURACIÓN ---
 @app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-gen-historico", "n_clicks"), prevent_initial_call=True)
 def handle_historical_load(n_clicks):
     if not fue_un_clic_real('btn-gen-historico'): return no_update
@@ -110,76 +117,50 @@ def handle_omega_class_generation(n_clicks):
     success, message = calculate_and_save_frequencies()
     return dbc.Alert(message, color="success" if success else "danger", duration=8000)
 
-@app.callback(
-    Output("notification-container", "children", allow_duplicate=True),
-    Input("btn-optimize-thresholds", "n_clicks"),
-    prevent_initial_call=True
-)
+@app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-optimize-thresholds", "n_clicks"), prevent_initial_call=True)
 def handle_optimize_thresholds(n_clicks):
     if not fue_un_clic_real('btn-optimize-thresholds'): return no_update
-    
     from modules import ml_optimizer, omega_logic, database
-    
-    logger.info("Callback 'handle_optimize_thresholds' (Versión Manus) disparado.")
+    logger.info("Callback 'handle_optimize_thresholds' disparado.")
     df_historico = database.read_historico_from_db()
     freqs = omega_logic.get_frequencies()
-    
     if df_historico.empty or freqs is None:
         return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.", color="warning")
-    
     start = time.time()
     success, message, report = ml_optimizer.optimize_thresholds(df_historico, freqs)
     total_time = time.time() - start
-    
     importlib.reload(config)
-    
     if success and isinstance(report, dict):
         new_thr = report.get('new_thresholds', {})
         ch = report.get('cobertura_historica', 0)
         cu = report.get('cobertura_universal_estimada', 0)
-        
-        details = (
-            f"Nuevos umbrales: P={new_thr.get('pares')}, T={new_thr.get('tercias')}, C={new_thr.get('cuartetos')}. | "
-            f"CH: {ch:.1%} | CU (Estimada): {cu:.2%}"
-        )
-        
-        instruction = "Para aplicar, re-ejecute '4. ENRIQUECER Y PRE-GENERAR'."
-        full_message = f"{message} {details} {instruction} (Tiempo: {total_time:.2f}s)"
+        details = (f"Nuevos umbrales: P={new_thr.get('pares')}, T={new_thr.get('tercias')}, C={new_thr.get('cuartetos')}. | "
+                   f"CH: {ch:.1%} | CU (Est.): {cu:.2%}")
+        instruction = " Para aplicar, re-ejecute '4. ENRIQUECER Y PRE-GENERAR'."
+        full_message = f"{message} {details}{instruction} (Tiempo: {total_time:.2f}s)"
     else:
         full_message = f"{message} (Tiempo: {total_time:.2f}s)"
-        
     return dbc.Alert(full_message, color="success" if success else "danger", duration=25000)
 
-@app.callback(
-    Output("notification-container", "children", allow_duplicate=True),
-    Input("btn-enrich-pregen", "n_clicks"),
-    prevent_initial_call=True
-)
+@app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-enrich-pregen", "n_clicks"), prevent_initial_call=True)
 def handle_enrich_and_pregenerate(n_clicks):
     if not fue_un_clic_real('btn-enrich-pregen'): return no_update
     from modules.omega_logic import enrich_historical_data, pregenerate_omega_class
     importlib.reload(config)
-    
     logger.info("Iniciando Fase 1: Enriquecimiento de datos históricos.")
     start_enrich = time.time()
     success_enrich, msg_enrich = enrich_historical_data()
     time_enrich = time.time() - start_enrich
-    
-    if not success_enrich:
-        return dbc.Alert(f"Falló el enriquecimiento de datos: {msg_enrich}", color="danger")
-    
+    if not success_enrich: return dbc.Alert(f"Falló el enriquecimiento: {msg_enrich}", color="danger")
     logger.info("Iniciando Fase 2: Pre-generación de Clase Omega.")
     start_pregen = time.time()
     success_pregen, msg_pregen = pregenerate_omega_class()
     time_pregen = time.time() - start_pregen
-    
-    if not success_pregen:
-        return dbc.Alert(f"Falló la pre-generación: {msg_pregen}", color="danger")
-
+    if not success_pregen: return dbc.Alert(f"Falló la pre-generación: {msg_pregen}", color="danger")
     total_time = time_enrich + time_pregen
     full_message = f"Proceso completado en {total_time:.2f}s. {msg_enrich} {msg_pregen}"
     return dbc.Alert(full_message, color="success", duration=15000)
-    
+
 # --- Callbacks del Generador ---
 @app.callback([Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)] + [Output("notification-container", "children", allow_duplicate=True)] + [Output('store-validated-omega', 'data', allow_duplicate=True)], Input("btn-generar", "n_clicks"), [State(f"num-input-{i}", "value") for i in range(6)], prevent_initial_call=True)
 def handle_generate_omega(n_clicks, *num_inputs):
@@ -248,6 +229,7 @@ def control_registration_fields(validated_omega, *current_inputs_tuple):
     if validated_omega and len(current_inputs) == 6 and sorted(validated_omega) == current_inputs: return False, False, False
     return True, True, True
 
+# --- Callbacks de Registro y Gestión ---
 @app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-registrar", "n_clicks"), [State('store-validated-omega', 'data'), State('input-nombre', 'value'), State('input-movil', 'value')], prevent_initial_call=True)
 def handle_register_omega(n_clicks, validated_omega, nombre, movil):
     if not fue_un_clic_real('btn-registrar'): return no_update
@@ -256,7 +238,6 @@ def handle_register_omega(n_clicks, validated_omega, nombre, movil):
     success, message = register_omega_combination(validated_omega, nombre.strip(), movil.strip())
     return dbc.Alert(message, color="success" if success else "danger", duration=5000)
 
-# --- CALLBACKS QUE FALTABAN ---
 @app.callback(Output('table-registros', 'data'), Input('btn-refresh-registros', 'n_clicks'), Input('btn-nav-registros', 'n_clicks'), State('modal-confirm-delete', 'is_open'))
 def populate_registros_table(refresh_clicks, nav_clicks, is_modal_open):
     if ctx.triggered_id in ['btn-refresh-registros', 'btn-nav-registros'] or (ctx.triggered_id == 'modal-confirm-delete' and not is_modal_open):
@@ -284,6 +265,7 @@ def cancel_delete(n_clicks):
     if not fue_un_clic_real('btn-cancel-delete'): return no_update
     return False
 
+# --- Callbacks de Visores ---
 @app.callback(Output('table-historicos', 'data'), Output('table-historicos', 'style_data_conditional'), Input('btn-refresh-historicos', 'n_clicks'), Input('btn-nav-historicos', 'n_clicks'))
 def populate_historicos_table(refresh_clicks, nav_clicks):
     if ctx.triggered_id in ['btn-refresh-historicos', 'btn-nav-historicos']:
@@ -300,25 +282,16 @@ def populate_historicos_table(refresh_clicks, nav_clicks):
         return df.to_dict('records'), styles
     return no_update, no_update
 
-@app.callback(
-    Output('graph-universo', 'figure'), Output('graph-historico', 'figure'),
-    Output('graph-ganadores', 'figure'), Output('graph-scatter-score-bolsa', 'figure'),
-    Output('notification-container', 'children', allow_duplicate=True),
-    Input('btn-refresh-graficos', 'n_clicks'),
-    prevent_initial_call=True
-)
+@app.callback(Output('graph-universo', 'figure'), Output('graph-historico', 'figure'), Output('graph-ganadores', 'figure'), Output('graph-scatter-score-bolsa', 'figure'), Output('notification-container', 'children', allow_duplicate=True), Input('btn-refresh-graficos', 'n_clicks'), prevent_initial_call=True)
 def update_all_graphs(n_clicks):
-    if not fue_un_clic_real('btn-refresh-graficos'):
-        return no_update, no_update, no_update, no_update, no_update
+    if not fue_un_clic_real('btn-refresh-graficos'): return no_update, no_update, no_update, no_update, no_update
     from modules.database import read_historico_from_db, count_omega_class
     from modules.omega_logic import C
     empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     total_omega_class = count_omega_class()
-    if not isinstance(total_omega_class, (int, float, np.integer)):
-        return empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Error de tipo en datos.", color="danger")
+    if not isinstance(total_omega_class, (int, float, np.integer)): return empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Error de tipo.", color="danger")
     total_omega_class_int = int(total_omega_class)
-    if total_omega_class_int == 0:
-        return empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Clase Omega no generada.", color="warning")
+    if total_omega_class_int == 0: return empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Clase Omega no generada.", color="warning")
     fig_universo = create_donut_chart([total_omega_class_int, C(39, 6) - total_omega_class_int], ['Clase Omega', 'Otras'], 'Universo')
     df_historico = read_historico_from_db()
     if df_historico.empty: return no_update, empty_fig, empty_fig, empty_fig, dbc.Alert("Histórico vacío.", color="warning")
@@ -343,53 +316,47 @@ def update_all_graphs(n_clicks):
         fig_scatter.update_traces(marker=dict(size=10, opacity=0.7, line=dict(width=1, color='DarkSlateGrey')))
     return fig_universo, fig_historico, fig_ganadores, fig_scatter, None
 
-# --- CALLBACKS PARA IMPORTACIÓN/EXPORTACIÓN DE REGISTROS ---
-
 @app.callback(
-    Output("notification-container", "children", allow_duplicate=True),
-    Input("btn-export-registros", "n_clicks"),
-    prevent_initial_call=True
+    Output('graph-trayectoria-umbrales', 'figure'),
+    Input('btn-refresh-trayectoria', 'n_clicks'),
+    Input('btn-nav-trayectoria', 'n_clicks')
 )
-def handle_export_registros(n_clicks):
-    if not fue_un_clic_real('btn-export-registros'):
-        return no_update
+def update_trajectory_graph(refresh_clicks, nav_clicks):
+    from modules.database import read_trajectory_data
     
-    from modules.database import export_registrations_to_json
-    logger.info("Iniciando exportación de registros.")
-    success, message = export_registrations_to_json()
-    color = "success" if success else "danger"
-    
-    return dbc.Alert(message, color=color, duration=5000)
+    # --- LOGGING DE DEPURACIÓN ---
+    logger.info(f"Callback 'update_trajectory_graph' invocado. Trigger: {ctx.triggered_id}")
+    # ---------------------------
 
-@app.callback(
-    Output("modal-confirm-import", "is_open"),
-    Input("btn-import-registros", "n_clicks"),
-    prevent_initial_call=True
-)
-def open_import_modal(n_clicks):
-    if fue_un_clic_real('btn-import-registros'):
-        return True
-    return False
+    if ctx.triggered_id in ['btn-refresh-trayectoria', 'btn-nav-trayectoria']:
+        logger.info("Condición de trigger cumplida. Cargando datos...")
+        df_trajectory = read_trajectory_data()
+        
+        if df_trajectory.empty:
+            logger.warning("El DataFrame de trayectoria está vacío. Mostrando gráfico en blanco.")
+            fig = go.Figure()
+            fig.update_layout(title_text="No hay datos de trayectoria generados.", title_x=0.5)
+            return fig
 
-@app.callback(
-    Output("notification-container", "children", allow_duplicate=True),
-    Output("modal-confirm-import", "is_open", allow_duplicate=True),
-    Input("btn-import-overwrite", "n_clicks"),
-    Input("btn-import-no-overwrite", "n_clicks"),
-    prevent_initial_call=True
-)
-def handle_import_registros(overwrite_clicks, no_overwrite_clicks):
-    from modules.database import import_registrations_from_json
+        # --- LOGGING DE DEPURACIÓN ---
+        logger.info("DataFrame recibido en el callback, listo para graficar.")
+        # ---------------------------
+        
+        fig = px.line(
+            df_trajectory,
+            x='ultimo_concurso_usado',
+            y=['umbral_pares', 'umbral_tercias', 'umbral_cuartetos'],
+            template='simple_white',
+            labels={'ultimo_concurso_usado': 'Sorteo Histórico', 'value': 'Valor del Umbral'},
+            title='Evolución de Umbrales Óptimos'
+        )
+        fig.update_layout(title_x=0.5, legend_title_text='Afinidad')
+        return fig
     
-    # Determinamos si el usuario quiere sobrescribir basándonos en qué botón se presionó
-    overwrite = ctx.triggered_id == 'btn-import-overwrite'
-    
-    logger.info(f"Iniciando importación de registros con overwrite={overwrite}")
-    added, updated, total, message = import_registrations_from_json(overwrite=overwrite)
-    
-    # Cerramos el modal y mostramos el resultado
-    return dbc.Alert(message, color="success", duration=8000), False
+    logger.warning("Condición de trigger NO cumplida. No se actualiza el gráfico.")
+    return no_update
 
+# --- PUNTO DE ENTRADA ---
 if __name__ == "__main__":
     logger.info("Iniciando servidor (Debug OFF).")
-    app.run(debug=False, port=8050) # type: ignore
+    app.run(debug=False, port=8050) # type ignored

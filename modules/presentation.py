@@ -18,8 +18,10 @@ def create_navigation():
                 dbc.ButtonGroup(
                     [
                         dbc.Button("GENERADOR OMEGA", id="btn-nav-generador", className="nav-button"),
-                        dbc.Button("GRÁFICOS Y ESTADÍSTICAS", id="btn-nav-graficos", className="nav-button"),
-                        dbc.Button("VISOR DE HISTÓRICOS", id="btn-nav-historicos", className="nav-button"),
+                        dbc.Button("GRÁFICOS", id="btn-nav-graficos", className="nav-button"),
+                        dbc.Button("VISOR HISTÓRICOS", id="btn-nav-historicos", className="nav-button"),
+                        # --- NUEVA PESTAÑA ---
+                        dbc.Button("ANÁLISIS DE TRAYECTORIA", id="btn-nav-trayectoria", className="nav-button"),
                         dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"),
                         dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
                     ],
@@ -170,6 +172,20 @@ def create_graficos_view():
                 width=12 # Ocupa todo el ancho
             )
         ])
+    ])
+
+def create_trayectoria_view():
+    """Crea el layout para la pestaña de Análisis de Trayectoria."""
+    return html.Div([
+        html.H3("Análisis de Trayectoria de Umbrales", className="text-center text-dark mb-4"),
+        html.P("Esta visualización muestra cómo los umbrales óptimos para Pares, Tercias y Cuartetos han evolucionado a lo largo del tiempo, recalculados en cada bloque de sorteos.", className="text-center text-muted"),
+        dbc.Row(dbc.Col(
+            dbc.Button("Cargar/Refrescar Gráfico de Trayectoria", id="btn-refresh-trayectoria", className="mb-3", color="primary")
+        ), justify="end"),
+        
+        dbc.Card(
+            dbc.CardBody(dcc.Graph(id='graph-trayectoria-umbrales'))
+        )
     ])
 
 def create_layout():
