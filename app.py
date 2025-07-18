@@ -50,7 +50,7 @@ def create_donut_chart(values, labels, title):
     fig.update_layout(title_text=title, title_x=0.5, showlegend=False, margin=dict(t=50, b=20, l=20, r=20), height=350, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# --- CALLBACKS DE NAVEGACIÓN (FORMA EXPLÍCITA Y ROBUSTA) ---
+# --- CALLBACKS DE NAVEGACIÓN ---
 @app.callback(
     Output("view-content", "children"),
     Input("btn-nav-generador", "n_clicks"),
@@ -121,13 +121,12 @@ def handle_omega_class_generation(n_clicks):
 def handle_optimize_thresholds(n_clicks):
     if not fue_un_clic_real('btn-optimize-thresholds'): return no_update
     from modules import ml_optimizer, omega_logic, database
-    logger.info("Callback 'handle_optimize_thresholds' disparado.")
+    logger.info("Callback 'handle_optimize_thresholds' (Versión Manus Final) disparado.")
     df_historico = database.read_historico_from_db()
     freqs = omega_logic.get_frequencies()
-    if df_historico.empty or freqs is None:
-        return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.", color="warning")
+    if df_historico.empty or freqs is None: return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.", color="warning")
     start = time.time()
-    success, message, report = ml_optimizer.optimize_thresholds(df_historico, freqs)
+    success, message, report = ml_optimizer.run_optimization(df_historico, freqs)
     total_time = time.time() - start
     importlib.reload(config)
     if success and isinstance(report, dict):
@@ -135,11 +134,10 @@ def handle_optimize_thresholds(n_clicks):
         ch = report.get('cobertura_historica', 0)
         cu = report.get('cobertura_universal_estimada', 0)
         details = (f"Nuevos umbrales: P={new_thr.get('pares')}, T={new_thr.get('tercias')}, C={new_thr.get('cuartetos')}. | "
-                   f"CH: {ch:.1%} | CU (Est.): {cu:.2%}")
+                   f"CH: {ch:.1%} | CU (Estimada): {cu:.2%}")
         instruction = " Para aplicar, re-ejecute '4. ENRIQUECER Y PRE-GENERAR'."
         full_message = f"{message} {details}{instruction} (Tiempo: {total_time:.2f}s)"
-    else:
-        full_message = f"{message} (Tiempo: {total_time:.2f}s)"
+    else: full_message = f"{message} (Tiempo: {total_time:.2f}s)"
     return dbc.Alert(full_message, color="success" if success else "danger", duration=25000)
 
 @app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-enrich-pregen", "n_clicks"), prevent_initial_call=True)
@@ -208,14 +206,12 @@ def handle_analizar_combinacion(n_clicks, *num_inputs):
     card_class_color = "border-success bg-success-subtle" if es_omega else "border-danger bg-danger-subtle"
     combo_text = f"Tu combinación: {result.get('combinacion', [])}"
     omega_score = result.get('omegaScore')
-    if isinstance(omega_score, (int, float)): score_text = f"Omega Score: {omega_score:.4f}"
-    else: score_text = "Omega Score: N/A"
+    score_text = f"Omega Score: {omega_score:.4f}" if isinstance(omega_score, (int, float)) else "Omega Score: N/A"
     criterios = result.get("criterios", {})
     if not isinstance(criterios, dict): return default_return[:-1] + [dbc.Alert("Faltan datos de criterios.", color="danger")]
     pares, tercias, cuartetos = criterios.get("pares", {}), criterios.get("tercias", {}), criterios.get("cuartetos", {})
     details_list = [html.Li(f"Afinidad de Pares: {pares.get('score')} / {pares.get('umbral')} {'✅' if pares.get('cumple') else '❌'}"), html.Li(f"Afinidad de Tercias: {tercias.get('score')} / {tercias.get('umbral')} {'✅' if tercias.get('cumple') else '❌'}"), html.Li(f"Afinidad de Cuartetos: {cuartetos.get('score')} / {cuartetos.get('umbral')} {'✅' if cuartetos.get('cumple') else '❌'}")]
-    validated_combo_for_store = combination if es_omega else None
-    return {'display': 'block'}, f"{card_class_base} {card_class_color}", title, combo_text, score_text, details_list, validated_combo_for_store, None
+    return {'display': 'block'}, f"{card_class_base} {card_class_color}", title, combo_text, score_text, details_list, (combination if es_omega else None), None
 
 @app.callback([Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)] + [Output('store-validated-omega', 'data', allow_duplicate=True)] + [Output('analysis-result-card', 'style', allow_duplicate=True)], Input("btn-clear-inputs", "n_clicks"), prevent_initial_call=True)
 def handle_clear_inputs(n_clicks):
@@ -229,7 +225,7 @@ def control_registration_fields(validated_omega, *current_inputs_tuple):
     if validated_omega and len(current_inputs) == 6 and sorted(validated_omega) == current_inputs: return False, False, False
     return True, True, True
 
-# --- Callbacks de Registro y Gestión ---
+# --- CALLBACKS DE REGISTRO Y GESTIÓN ---
 @app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-registrar", "n_clicks"), [State('store-validated-omega', 'data'), State('input-nombre', 'value'), State('input-movil', 'value')], prevent_initial_call=True)
 def handle_register_omega(n_clicks, validated_omega, nombre, movil):
     if not fue_un_clic_real('btn-registrar'): return no_update
@@ -265,7 +261,7 @@ def cancel_delete(n_clicks):
     if not fue_un_clic_real('btn-cancel-delete'): return no_update
     return False
 
-# --- Callbacks de Visores ---
+# --- CALLBACKS DE VISORES (REINTEGRADOS) ---
 @app.callback(Output('table-historicos', 'data'), Output('table-historicos', 'style_data_conditional'), Input('btn-refresh-historicos', 'n_clicks'), Input('btn-nav-historicos', 'n_clicks'))
 def populate_historicos_table(refresh_clicks, nav_clicks):
     if ctx.triggered_id in ['btn-refresh-historicos', 'btn-nav-historicos']:
@@ -316,47 +312,25 @@ def update_all_graphs(n_clicks):
         fig_scatter.update_traces(marker=dict(size=10, opacity=0.7, line=dict(width=1, color='DarkSlateGrey')))
     return fig_universo, fig_historico, fig_ganadores, fig_scatter, None
 
-@app.callback(
-    Output('graph-trayectoria-umbrales', 'figure'),
-    Input('btn-refresh-trayectoria', 'n_clicks'),
-    Input('btn-nav-trayectoria', 'n_clicks')
-)
+@app.callback(Output('graph-trayectoria-umbrales', 'figure'), Input('btn-refresh-trayectoria', 'n_clicks'), Input('btn-nav-trayectoria', 'n_clicks'))
 def update_trajectory_graph(refresh_clicks, nav_clicks):
-    from modules.database import read_trajectory_data
-    
-    # --- LOGGING DE DEPURACIÓN ---
-    logger.info(f"Callback 'update_trajectory_graph' invocado. Trigger: {ctx.triggered_id}")
-    # ---------------------------
-
     if ctx.triggered_id in ['btn-refresh-trayectoria', 'btn-nav-trayectoria']:
-        logger.info("Condición de trigger cumplida. Cargando datos...")
+        from modules.database import read_trajectory_data
         df_trajectory = read_trajectory_data()
-        
         if df_trajectory.empty:
-            logger.warning("El DataFrame de trayectoria está vacío. Mostrando gráfico en blanco.")
             fig = go.Figure()
-            fig.update_layout(title_text="No hay datos de trayectoria generados.", title_x=0.5)
+            fig.update_layout(title_text="No hay datos de trayectoria. Ejecute 'generate_trajectory.py'", title_x=0.5, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             return fig
-
-        # --- LOGGING DE DEPURACIÓN ---
-        logger.info("DataFrame recibido en el callback, listo para graficar.")
-        # ---------------------------
-        
         fig = px.line(
-            df_trajectory,
-            x='ultimo_concurso_usado',
-            y=['umbral_pares', 'umbral_tercias', 'umbral_cuartetos'],
-            template='simple_white',
-            labels={'ultimo_concurso_usado': 'Sorteo Histórico', 'value': 'Valor del Umbral'},
+            df_trajectory, x='ultimo_concurso_usado', y=['umbral_pares', 'umbral_tercias', 'umbral_cuartetos'],
+            template='simple_white', labels={'ultimo_concurso_usado': 'Sorteo Histórico', 'value': 'Valor del Umbral'},
             title='Evolución de Umbrales Óptimos'
         )
         fig.update_layout(title_x=0.5, legend_title_text='Afinidad')
         return fig
-    
-    logger.warning("Condición de trigger NO cumplida. No se actualiza el gráfico.")
     return no_update
 
 # --- PUNTO DE ENTRADA ---
 if __name__ == "__main__":
     logger.info("Iniciando servidor (Debug OFF).")
-    app.run(debug=False, port=8050) # type ignored
+    app.run(debug=False, port=8050) # type: ignore
