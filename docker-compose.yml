@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  zen-lotto-app:
+    # Construye la imagen usando el Dockerfile en el directorio actual
+    build: .
+    # Le da un nombre amigable al contenedor
+    container_name: zen-lotto
+    # Mapea el puerto 8050 del contenedor al puerto 8050 de tu máquina
+    ports:
+      - "8050:8050"
+    # El paso clave: Mapea la carpeta 'data' local a una carpeta '/app/data' dentro del contenedor
+    volumes:
+      - ./data:/app/data
+    # Reinicia el contenedor si se cae, a menos que lo detengamos manualmente
+    restart: unless-stopped

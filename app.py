@@ -330,7 +330,61 @@ def update_trajectory_graph(refresh_clicks, nav_clicks):
         return fig
     return no_update
 
+# --- CALLBACKS PARA IMPORTACIÓN/EXPORTACIÓN DE REGISTROS ---
+
+@app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Input("btn-export-registros", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_export_registros(n_clicks):
+    """Maneja el clic del botón de exportación."""
+    if not fue_un_clic_real('btn-export-registros'):
+        return no_update
+    
+    from modules.database import export_registrations_to_json
+    logger.info("Iniciando exportación de registros.")
+    success, message = export_registrations_to_json()
+    color = "success" if success else "danger"
+    
+    return dbc.Alert(message, color=color, duration=5000)
+
+@app.callback(
+    Output("modal-confirm-import", "is_open"),
+    Input("btn-import-registros", "n_clicks"),
+    prevent_initial_call=True
+)
+def open_import_modal(n_clicks):
+    """Abre el modal de confirmación de importación."""
+    if fue_un_clic_real('btn-import-registros'):
+        return True
+    return False
+
+@app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Output("modal-confirm-import", "is_open", allow_duplicate=True),
+    Input("btn-import-overwrite", "n_clicks"),
+    Input("btn-import-no-overwrite", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_import_registros(overwrite_clicks, no_overwrite_clicks):
+    """Maneja la lógica de importación con o sin sobrescritura."""
+    from modules.database import import_registrations_from_json
+    
+    # Comprueba qué botón disparó el callback para decidir si se sobrescribe
+    trigger_id = ctx.triggered_id
+    if trigger_id not in ['btn-import-overwrite', 'btn-import-no-overwrite']:
+        return no_update, no_update
+
+    overwrite = trigger_id == 'btn-import-overwrite'
+    
+    logger.info(f"Iniciando importación de registros con overwrite={overwrite}")
+    added, updated, total, message = import_registrations_from_json(overwrite=overwrite)
+    
+    # Cierra el modal y muestra el mensaje de resultado
+    return dbc.Alert(message, color="success", duration=8000), False
+
 # --- PUNTO DE ENTRADA ---
 if __name__ == "__main__":
     logger.info("Iniciando servidor (Debug OFF).")
-    app.run(debug=False, port=8050) # type: ignore
+    app.run(debug=False, host='0.0.0.0', port=8050) # type: ignore

@@ -1,0 +1,26 @@
+# Entorno virtual
+.venv/
+venv/
+
+# Archivos de caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos de configuración de IDE
+.vscode/
+.idea/
+
+# Archivos de datos locales (estos se montarán como un volumen, no se copiarán)
+*.db
+*.json
+*.log
+
+# Archivos de Git
+.git/
+.gitignore
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
