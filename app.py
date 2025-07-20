@@ -132,60 +132,123 @@ if __name__ == "__main__":
         success, message = calculate_and_save_frequencies()
         return dbc.Alert(message, color="success" if success else "danger", duration=8000)
 
-    @app.callback(Output("notification-container", "children", allow_duplicate=True), Input("btn-optimize-thresholds", "n_clicks"), prevent_initial_call=True)
-    def handle_optimize_thresholds(n_clicks):
-        if not fue_un_clic_real('btn-optimize-thresholds'): return no_update
+    @app.callback(
+    Output("notification-container", "children", allow_duplicate=True),
+    Input("btn-optimize-thresholds", "n_clicks"),
+    progress=[
+        Output("progress-bar", "value"),
+        Output("progress-text", "children"),
+        Output("progress-container", "style"),
+        Output("btn-optimize-thresholds", "disabled"),
+        Output("btn-gen-historico", "disabled"),
+        Output("btn-gen-omega", "disabled"),
+        Output("btn-enrich-pregen", "disabled"),
+    ],
+    background=True,
+    prevent_initial_call=True
+    )
+    def handle_optimize_thresholds(set_progress, n_clicks):
+        if not n_clicks or n_clicks < 1:
+            raise dash.exceptions.PreventUpdate
+        
         from modules import ml_optimizer, omega_logic, database
-        logger.info("Callback 'handle_optimize_thresholds' (Versión Manus Final) disparado.")
+        
+        state = state_manager.get_state()
+        
+        # --- CORRECCIÓN DE TIPO CON VALOR POR DEFECTO SEGURO ---
+        last_freqs = state.get("last_concurso_for_freqs", 0)
+        last_opt = state.get("last_concurso_for_optimization", -1)
+        
+        if last_freqs == last_opt:
+            return dbc.Alert("Los umbrales ya están optimizados con los datos más recientes.", color="info", duration=5000)
+            
+        # Deshabilitamos botones y mostramos la barra de progreso
+        set_progress((0, "Iniciando optimización...", {'display': 'block'}, True, True, True, True))
+
         df_historico = database.read_historico_from_db()
         freqs = omega_logic.get_frequencies()
-        if df_historico.empty or freqs is None: return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.", color="warning")
+        if df_historico.empty or freqs is None:
+            set_progress((100, "Error.", {'display': 'none'}, False, False, False, False))
+            return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.", color="warning")
+
         start = time.time()
-        success, message, report = ml_optimizer.run_optimization(df_historico, freqs)
+        success, message, report = ml_optimizer.run_optimization(df_historico, freqs, set_progress=set_progress)
         total_time = time.time() - start
+        
         importlib.reload(config)
+        
         if success and isinstance(report, dict):
             new_thr, ch, cu = report.get('new_thresholds', {}), report.get('cobertura_historica', 0), report.get('cobertura_universal_estimada', 0)
-            details = (f"Nuevos umbrales: P={new_thr.get('pares')}, T={new_thr.get('tercias')}, C={new_thr.get('cuartetos')}. | " f"CH: {ch:.1%} | CU (Est.): {cu:.2%}")
+            details = f"Nuevos umbrales: P={new_thr.get('pares')}, T={new_thr.get('tercias')}, C={new_thr.get('cuartetos')}. | CH: {ch:.1%} | CU (Est.): {cu:.2%}"
             instruction = " Para aplicar, re-ejecute '4. ENRIQUECER Y PRE-GENERAR'."
             full_message = f"{message} {details}{instruction} (Tiempo: {total_time:.2f}s)"
-        else: full_message = f"{message} (Tiempo: {total_time:.2f}s)"
-        return dbc.Alert(full_message, color="success" if success else "danger", duration=25000)
+            
+            # Guardamos el estado de que la optimización se hizo con esta versión de las frecuencias
+            state["last_concurso_for_optimization"] = state.get("last_concurso_for_freqs", 0)
+            state_manager.save_state(state)
+        else:
+            full_message = f"{message} (Tiempo: {total_time:.2f}s)"
 
+        # Ocultamos la barra de progreso y habilitamos los botones
+        set_progress((100, "Completado.", {'display': 'none'}, False, False, False, False))
+        return dbc.Alert(full_message, color="success" if success else "danger", duration=25000)
+    
     @app.callback(
-        Output("notification-container", "children", allow_duplicate=True),
-        Input("btn-enrich-pregen", "n_clicks"),
-        progress=[
-            Output("progress-bar", "value"),
-            Output("progress-text", "children"),
-            Output("progress-container", "style"),
-            Output("btn-enrich-pregen", "disabled"),
-            Output("btn-gen-historico", "disabled"),
-            Output("btn-gen-omega", "disabled"),
-            Output("btn-optimize-thresholds", "disabled"),
-        ],
-        background=True,
-        prevent_initial_call=True
+    Output("notification-container", "children", allow_duplicate=True),
+    Input("btn-enrich-pregen", "n_clicks"),
+    progress=[
+        Output("progress-bar", "value"),
+        Output("progress-text", "children"),
+        Output("progress-container", "style"),
+        Output("btn-enrich-pregen", "disabled"),
+        Output("btn-gen-historico", "disabled"),
+        Output("btn-gen-omega", "disabled"),
+        Output("btn-optimize-thresholds", "disabled"),
+    ],
+    background=True,
+    prevent_initial_call=True
     )
     def handle_enrich_and_pregenerate(set_progress, n_clicks):
         if not n_clicks or n_clicks < 1:
             raise dash.exceptions.PreventUpdate
+        
         from modules.omega_logic import enrich_historical_data, pregenerate_omega_class
+        
+        state = state_manager.get_state()
+        
+        # --- CORRECCIÓN DE TIPO CON VALOR POR DEFECTO SEGURO ---
+        last_opt = state.get("last_concurso_for_optimization", 0)
+        last_omega_class = state.get("last_concurso_for_omega_class", -1)
+
+        # Validación: Si la Clase Omega ya fue generada con los últimos umbrales, no hacer nada.
+        if last_opt > 0 and last_opt == last_omega_class:
+            return dbc.Alert("Los datos ya están enriquecidos y la Clase Omega pre-generada con los últimos umbrales.", color="info", duration=5000)
+
         importlib.reload(config)
+        
+        # Mostrar barra de progreso y deshabilitar botones
         set_progress((0, "Iniciando...", {'display': 'block'}, True, True, True, True))
-        logger.info("Iniciando Fase 1: Enriquecimiento de datos históricos.")
+        
         success_enrich, msg_enrich = enrich_historical_data(set_progress)
         if not success_enrich:
             set_progress((100, "Error.", {'display': 'none'}, False, False, False, False))
             return dbc.Alert(f"Falló el enriquecimiento: {msg_enrich}", color="danger")
-        logger.info("Iniciando Fase 2: Pre-generación de Clase Omega.")
+        
         success_pregen, msg_pregen = pregenerate_omega_class(set_progress)
         if not success_pregen:
             set_progress((100, "Error.", {'display': 'none'}, False, False, False, False))
             return dbc.Alert(f"Falló la pre-generación: {msg_pregen}", color="danger")
+
         full_message = f"Proceso completado. {msg_enrich} {msg_pregen}"
+        
+        # Guardamos el estado de que este proceso se completó
+        state["last_concurso_for_omega_class"] = state.get("last_concurso_for_optimization", 0)
+        state_manager.save_state(state)
+        
+        # Ocultar barra y habilitar botones
         set_progress((100, "Completado.", {'display': 'none'}, False, False, False, False))
         return dbc.Alert(full_message, color="success", duration=15000)
+   
     
         # --- Callbacks del Generador ---
     @app.callback([Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)] + [Output("notification-container", "children", allow_duplicate=True)] + [Output('store-validated-omega', 'data', allow_duplicate=True)], Input("btn-generar", "n_clicks"), [State(f"num-input-{i}", "value") for i in range(6)], prevent_initial_call=True)

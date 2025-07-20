@@ -99,15 +99,16 @@ def _update_config_file(new_thresholds: dict) -> bool:
 
 # --- FUNCIÓN PÚBLICA PRINCIPAL ---
 
-def run_optimization(df_historico: pd.DataFrame, freqs: dict) -> Tuple[bool, str, dict]:
+def run_optimization(df_historico: pd.DataFrame, freqs: dict, set_progress=None) -> Tuple[bool, str, dict]:
     """
-    Función principal de optimización jerárquica de umbrales.
+    Función principal de optimización jerárquica de umbrales, con reporte de progreso robusto.
     """
+    # Importar no_update aquí para que esté disponible
+    from dash import no_update
+    
     try:
-        # FASE 1: Validación de Inputs
+        # FASE 1: Validación y FASE 2: Cálculo de Afinidades
         if df_historico.empty or not freqs: return False, "Datos de entrada inválidos.", {}
-
-        # FASE 2: Cálculo de Afinidades
         from modules.omega_logic import _calculate_subsequence_affinity
         afinidades_pares, afinidades_tercias, afinidades_cuartetos = [], [], []
         for _, row in df_historico.iterrows():
@@ -117,7 +118,6 @@ def run_optimization(df_historico: pd.DataFrame, freqs: dict) -> Tuple[bool, str
                 afinidades_tercias.append(_calculate_subsequence_affinity(combo, freqs, 3))
                 afinidades_cuartetos.append(_calculate_subsequence_affinity(combo, freqs, 4))
             except (ValueError, TypeError): continue
-        
         if not afinidades_pares: return False, "No se pudieron calcular afinidades.", {}
 
         # FASE 3: Generación de Escenarios
@@ -127,30 +127,38 @@ def run_optimization(df_historico: pd.DataFrame, freqs: dict) -> Tuple[bool, str
         # FASE 4: Paralelización
         afinidades_data = {'pares': afinidades_pares, 'tercias': afinidades_tercias, 'cuartetos': afinidades_cuartetos}
         freqs_data = {k: {str(key): val for key, val in v.items()} for k, v in freqs.items()}
-        
         n_processes = min(mp.cpu_count(), 8)
         worker_args = [(combo, afinidades_data, freqs_data) for combo in percentile_combinations]
         
         logger.info(f"Iniciando optimización con {len(worker_args)} escenarios en {n_processes} núcleos...")
         with mp.Pool(processes=n_processes) as pool:
-            worker_results = pool.map(_worker_evaluate_scenario, worker_args)
+            async_result = pool.map_async(_worker_evaluate_scenario, worker_args)
+            
+            progress_step = 0
+            while not async_result.ready():
+                if set_progress:
+                    progress = (progress_step % 5) * 20
+                    # --- CORRECCIÓN: Enviar la tupla completa de 7 elementos ---
+                    set_progress((
+                        progress, 
+                        f"Optimizando {len(worker_args)} escenarios...",
+                        no_update, # style
+                        no_update, # btn-optimize-thresholds
+                        no_update, # btn-gen-historico
+                        no_update, # btn-gen-omega
+                        no_update  # btn-enrich-pregen
+                    ))
+                time.sleep(1)
+                progress_step += 1
+            worker_results = async_result.get()
         
         valid_candidates = [result for result in worker_results if result]
         
-        # FASE 5: Selección del Óptimo
+        # FASE 5 y 6: Selección y Reporte
         if not valid_candidates: return False, "No se encontraron candidatos con CH >= 95%", {}
-        
         optimal_candidate = min(valid_candidates, key=lambda x: x['cobertura_universal_estimada'])
-        
-        # FASE 6: Generar Reporte y Actualizar Config
-        report = {
-            "new_thresholds": optimal_candidate['umbrales'],
-            "cobertura_historica": optimal_candidate['cobertura_historica'],
-            "cobertura_universal_estimada": optimal_candidate['cobertura_universal_estimada']
-        }
-        
-        if not _update_config_file(report["new_thresholds"]):
-            return False, "Falló la actualización del archivo de configuración.", {}
+        report = {"new_thresholds": optimal_candidate['umbrales'], "cobertura_historica": optimal_candidate['cobertura_historica'], "cobertura_universal_estimada": optimal_candidate['cobertura_universal_estimada']}
+        if not _update_config_file(report["new_thresholds"]): return False, "Falló la actualización del config.", {}
         
         return True, "Optimización exitosa (Ingeniería de Precisión).", report
         
