@@ -75,15 +75,28 @@ def create_generador_view():
     ])
 
 def create_configuracion_view():
+    """
+    Crea la vista de configuración con los botones de acción y los
+    componentes ocultos para el feedback de progreso.
+    """
     return html.Div([
         html.H3("Configuración y Mantenimiento", className="text-center text-dark mb-4"),
         dbc.Row([
             dbc.Col(dbc.Button("1. ACTUALIZAR HISTÓRICO", id="btn-gen-historico", color="dark", className="action-button"), width="auto"),
             dbc.Col(dbc.Button("2. ACTUALIZAR FRECUENCIAS", id="btn-gen-omega", color="dark", className="action-button"), width="auto"),
             dbc.Col(dbc.Button("3. OPTIMIZAR UMBRALES (ML)", id="btn-optimize-thresholds", color="primary", className="action-button"), width="auto"),
-            # --- BOTÓN COMBINADO ---
             dbc.Col(dbc.Button("4. ENRIQUECER Y PRE-GENERAR", id="btn-enrich-pregen", color="dark", className="action-button"), width="auto"),
-        ], justify="center", className="g-3")
+        ], justify="center", className="g-3"),
+        
+        # --- NUEVOS COMPONENTES DE PROGRESO ---
+        html.Div(
+            [
+                html.P("Procesando, por favor espere...", id="progress-text", className="mt-4 mb-2 text-muted"),
+                dbc.Progress(id="progress-bar", value=0, striped=True, animated=True, style={"height": "20px"}),
+            ],
+            id="progress-container",
+            style={'display': 'none'} # Oculto por defecto
+        )
     ])
 
 def create_registros_view():

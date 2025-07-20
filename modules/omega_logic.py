@@ -83,30 +83,67 @@ def calculate_and_save_frequencies():
         return True, f"Frecuencias actualizadas con éxito usando {len(df_new_draws)} nuevos sorteos."
     except Exception as e: return False, f"Error al guardar archivo de frecuencias: {e}"
 
-def enrich_historical_data():
-    logger.info("Iniciando el enriquecimiento de datos históricos...")
+def enrich_historical_data(set_progress=None):
+    """
+    Calcula todas las métricas para el histórico y las guarda en la BD,
+    reportando el progreso si se proporciona una función de callback.
+    """
+    # Importar no_update dentro de la función para mantener los módulos desacoplados
+    from dash import no_update
     from modules.database import read_historico_from_db, TABLE_NAME_HISTORICO
     import sqlite3
+
+    logger.info("Iniciando el enriquecimiento de datos históricos...")
+    
     df_historico = read_historico_from_db()
     freqs = get_frequencies()
-    if df_historico.empty or freqs is None: return False, "Faltan datos base para enriquecer."
-    if 'omega_score' in df_historico.columns: return True, "El histórico ya estaba enriquecido."
+
+    if df_historico.empty or freqs is None:
+        return False, "No se puede enriquecer. Faltan datos base."
+
     resultados_omega = []
-    for _, row in df_historico.iterrows():
-        try: combo = [int(row[col]) for col in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']]
-        except (ValueError, TypeError): continue
-        eval_result = evaluate_combination(combo, freqs)
-        af_q, af_t, af_p, es_omega_val, omega_score = 0, 0, 0, 0, 0.0
+    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+    total_rows = len(df_historico)
+    
+    for i, (_, row) in enumerate(df_historico.iterrows()):
+        try:
+            combination = [int(row[col]) for col in result_columns]
+        except (ValueError, TypeError):
+            continue
+
+        eval_result = evaluate_combination(combination, freqs)
+        
+        af_q, af_t, af_p, es_omega_val = 0, 0, 0, 0
+        omega_score = 0.0
+
         if isinstance(eval_result, dict) and not eval_result.get("error"):
             try:
-                af_q, af_t, af_p = int(eval_result.get('afinidadCuartetos', 0)), int(eval_result.get('afinidadTercias', 0)), int(eval_result.get('afinidadPares', 0))
+                af_q = int(eval_result.get('afinidadCuartetos', 0))
+                af_t = int(eval_result.get('afinidadTercias', 0))
+                af_p = int(eval_result.get('afinidadPares', 0))
                 es_omega_val = 1 if eval_result.get("esOmega") else 0
-            except (TypeError, ValueError): pass
-        s_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
-        s_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
-        s_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
-        omega_score = s_q + s_t + s_p
-        resultados_omega.append({'concurso': row['concurso'], 'es_omega': es_omega_val, 'omega_score': round(omega_score, 4), 'afinidad_cuartetos': af_q, 'afinidad_tercias': af_t, 'afinidad_pares': af_p})
+                
+                score_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
+                score_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
+                score_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
+                omega_score = score_q + score_t + score_p
+            except (TypeError, ValueError):
+                pass
+        
+        resultados_omega.append({
+            'concurso': row['concurso'], 'es_omega': es_omega_val,
+            'omega_score': round(omega_score, 4), 'afinidad_cuartetos': af_q,
+            'afinidad_tercias': af_t, 'afinidad_pares': af_p
+        })
+        
+        # Llama a set_progress con la tupla completa de 7 elementos
+        if set_progress and (i + 1) % 100 == 0:
+            progress = int(((i + 1) / total_rows) * 50)
+            set_progress((
+                progress, f"Enriqueciendo: {i+1}/{total_rows}", 
+                no_update, no_update, no_update, no_update, no_update
+            ))
+            
     df_omega_stats = pd.DataFrame(resultados_omega)
     df_historico_sorted = df_historico.sort_values(by='concurso')
     df_historico_sorted['bolsa_siguiente'] = df_historico_sorted['bolsa'].shift(-1)
@@ -114,39 +151,73 @@ def enrich_historical_data():
     cols_to_drop = [col for col in df_omega_stats.columns if col in df_historico_sorted.columns and col != 'concurso']
     df_historico_to_merge = df_historico_sorted.drop(columns=cols_to_drop)
     df_enriquecido = pd.merge(df_historico_to_merge, df_omega_stats, on='concurso')
+    
     try:
         conn = sqlite3.connect(config.DB_FILE)
         df_enriquecido.to_sql(TABLE_NAME_HISTORICO, conn, if_exists='replace', index=False)
         conn.close()
-        return True, "Datos históricos enriquecidos y guardados correctamente."
-    except Exception as e: return False, f"Error al guardar el histórico enriquecido: {e}"
+        return True, "Datos históricos enriquecidos."
+    except Exception as e:
+        return False, f"Error al guardar histórico enriquecido: {e}"
 
-def pregenerate_omega_class():
+def pregenerate_omega_class(set_progress=None):
+    """
+    Pre-genera la Clase Omega, reportando el progreso si se proporciona
+    una función de callback.
+    """
+    # Importar no_update dentro de la función
+    from dash import no_update
+
     logger.info("Verificando si la pre-generación es necesaria...")
     state = state_manager.get_state()
     last_concurso_for_freqs = state.get("last_concurso_for_freqs", 0)
     last_concurso_for_omega = state.get("last_concurso_for_omega_class", 0)
-    if last_concurso_for_freqs == 0: return False, "Frecuencias no generadas."
-    if last_concurso_for_freqs == last_concurso_for_omega: return True, "La Clase Omega ya está actualizada."
-    logger.info("Iniciando la pre-generación...")
+    
+    if last_concurso_for_freqs > 0 and last_concurso_for_freqs == last_concurso_for_omega:
+        return True, "Pre-generación ya está actualizada."
+
+    logger.info("Iniciando la pre-generación de Clase Omega...")
     freqs = get_frequencies()
-    if freqs is None: return False, "No se puede generar sin archivo de frecuencias."
+    if freqs is None: return False, "Faltan frecuencias para pre-generar."
+    
     df_historico = db.read_historico_from_db()
-    if df_historico.empty: return False, "No se pudo leer el histórico."
-    historical_draws_set = set(tuple(sorted(row)) for row in df_historico[['r1','r2','r3','r4','r5','r6']].to_numpy())
+    if df_historico.empty: return False, "Falta histórico para pre-generar."
+    
+    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+    historical_draws_set = set(tuple(sorted(row)) for row in df_historico[result_columns].to_numpy())
+    
     omega_list = []
     total_combinations = C(39, 6)
-    for count, combo in enumerate(combinations(range(1, 40), 6), 1):
-        if count % 200000 == 0: logger.info(f"Procesando... {count:,} / {total_combinations:,}")
+    all_possible_combinations = combinations(range(1, 40), 6)
+    
+    for count, combo in enumerate(all_possible_combinations, 1):
+        # Llama a set_progress con la tupla completa de 7 elementos
+        if set_progress and count % 100000 == 0:
+            progress = 50 + int((count / total_combinations) * 50)
+            set_progress((
+                progress, f"Pre-generando: {count:,}/{total_combinations:,}",
+                no_update, no_update, no_update, no_update, no_update
+            ))
+        
         result = evaluate_combination(list(combo), freqs)
-        if result.get("esOmega"):
-            omega_list.append({'c1': combo[0], 'c2': combo[1], 'c3': combo[2], 'c4': combo[3], 'c5': combo[4], 'c6': combo[5], 'ha_salido': 1 if combo in historical_draws_set else 0, 'afinidad_pares': result['afinidadPares'], 'afinidad_tercias': result['afinidadTercias'], 'afinidad_cuartetos': result['afinidadCuartetos']})
-    if not omega_list: return True, "No se encontraron combinaciones Omega."
+        if isinstance(result, dict) and result.get("esOmega"):
+            ha_salido = 1 if combo in historical_draws_set else 0
+            omega_list.append({
+                'c1': combo[0], 'c2': combo[1], 'c3': combo[2],
+                'c4': combo[3], 'c5': combo[4], 'c6': combo[5],
+                'ha_salido': ha_salido, 'afinidad_pares': result['afinidadPares'],
+                'afinidad_tercias': result['afinidadTercias'],
+                'afinidad_cuartetos': result['afinidadCuartetos'],
+            })
+
     omega_df = pd.DataFrame(omega_list)
     success, message = db.save_omega_class(omega_df)
+    
     if success:
         state["last_concurso_for_omega_class"] = last_concurso_for_freqs
         state_manager.save_state(state)
+        message = "Pre-generación completada."
+    
     return success, message
 
 def adjust_to_omega(user_combo):
