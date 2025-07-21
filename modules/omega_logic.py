@@ -145,11 +145,27 @@ def enrich_historical_data(set_progress=None):
             ))
             
     df_omega_stats = pd.DataFrame(resultados_omega)
-    df_historico_sorted = df_historico.sort_values(by='concurso')
-    df_historico_sorted['bolsa_siguiente'] = df_historico_sorted['bolsa'].shift(-1)
-    df_historico_sorted['bolsa_ganada'] = (df_historico_sorted['bolsa_siguiente'] == 5000000).astype(int)
-    cols_to_drop = [col for col in df_omega_stats.columns if col in df_historico_sorted.columns and col != 'concurso']
-    df_historico_to_merge = df_historico_sorted.drop(columns=cols_to_drop)
+
+    # --- INICIO DE LA LÓGICA DE CORRECCIÓN DE DATOS ---
+    # 1. Ordenamos por concurso ASCENDENTE para que shift() funcione correctamente
+    df_historico_sorted = df_historico.sort_values(by='concurso', ascending=True)
+    
+    # 2. Creamos la columna 'bolsa_ganada' que contiene el MONTO que se ganó.
+    # La bolsa que se gana es la del concurso ANTERIOR.
+    df_historico_sorted['bolsa_ganada'] = df_historico_sorted['bolsa'].shift(1)
+    
+    # 3. Creamos el flag 'es_ganador'. Un sorteo es el ganador si SU bolsa es 5M.
+    df_historico_sorted['es_ganador'] = (df_historico_sorted['bolsa'] == 5000000).astype(int)
+    
+    # Rellenamos el primer NaN que crea el shift
+    df_historico_sorted['bolsa_ganada'].fillna(0, inplace=True)
+    
+    # Ahora volvemos a ordenar DESC para la visualización en la tabla
+    df_historico_final = df_historico_sorted.sort_values(by='concurso', ascending=False)
+    # --- FIN DE LA LÓGICA DE CORRECCIÓN DE DATOS ---
+    
+    cols_to_drop = [col for col in df_omega_stats.columns if col in df_historico_final.columns and col != 'concurso']
+    df_historico_to_merge = df_historico_final.drop(columns=cols_to_drop)
     df_enriquecido = pd.merge(df_historico_to_merge, df_omega_stats, on='concurso')
     
     try:

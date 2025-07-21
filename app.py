@@ -374,7 +374,12 @@ if __name__ == "__main__":
         return dbc.Alert(message, color="success", duration=8000), False
 
     # --- Callbacks de Visores ---
-    @app.callback(Output('table-historicos', 'data'), Output('table-historicos', 'style_data_conditional'), Input('btn-refresh-historicos', 'n_clicks'), Input('btn-nav-historicos', 'n_clicks'))
+    @app.callback(
+    Output('table-historicos', 'data'), 
+    Output('table-historicos', 'style_data_conditional'), 
+    Input('btn-refresh-historicos', 'n_clicks'), 
+    Input('btn-nav-historicos', 'n_clicks')
+    )
     def populate_historicos_table(refresh_clicks, nav_clicks):
         if ctx.triggered_id in ['btn-refresh-historicos', 'btn-nav-historicos']:
             from modules.database import read_historico_from_db
@@ -382,15 +387,38 @@ if __name__ == "__main__":
             if df.empty: return [], []
             df['es_omega_str'] = df['es_omega'].apply(lambda x: 'Sí' if x == 1 else 'No')
             df['fecha'] = pd.to_datetime(df['fecha']).dt.strftime('%d/%m/%Y')
+            
+            # --- LÓGICA DE ESTILO CORREGIDA (ORDEN DE PRIORIDAD) ---
             styles = [
-                {'if': {'column_id': 'es_omega_str', 'filter_query': '{es_omega_str} = "Sí"'}, 'backgroundColor': '#d4edda', 'color': '#155724'},
-                {'if': {'column_id': 'es_omega_str', 'filter_query': '{es_omega_str} = "No"'}, 'backgroundColor': '#f8d7da', 'color': '#721c24'},
-                {'if': {'column_id': 'bolsa', 'filter_query': '{bolsa_ganada} = 1'}, 'backgroundColor': '#155724', 'color': 'white', 'fontWeight': 'bold'}
+                # 1. Regla general: Se aplica a toda la fila ganadora primero.
+                {'if': {'filter_query': '{bolsa_ganada} = 1'}, 
+                'backgroundColor': '#155724', 'color': 'white', 'fontWeight': 'bold'},
+                
+                # 2. Reglas específicas: Anulan la regla general SOLO para la columna 'es_omega_str'.
+                #    Estas se aplican después y tienen la última palabra.
+                {'if': {'column_id': 'es_omega_str', 'filter_query': '{es_omega_str} = "Sí"'}, 
+                'backgroundColor': '#d4edda', 'color': '#155724'},
+                {'if': {'column_id': 'es_omega_str', 'filter_query': '{es_omega_str} = "No"'}, 
+                'backgroundColor': '#f8d7da', 'color': '#721c24'},
             ]
+            
+            # Para evitar romper el filter_query de la tabla que esperaba 'bolsa_ganada',
+            # simplemente renombremos la columna en el DF que se envía a la tabla.
+            if 'es_ganador' in df.columns:
+                    df.rename(columns={'es_ganador': 'bolsa_ganada'}, inplace=True)
+
             return df.to_dict('records'), styles
         return no_update, no_update
 
-    @app.callback(Output('graph-universo', 'figure'), Output('graph-historico', 'figure'), Output('graph-ganadores', 'figure'), Output('graph-scatter-score-bolsa', 'figure'), Output('notification-container', 'children', allow_duplicate=True), Input('btn-refresh-graficos', 'n_clicks'), prevent_initial_call=True)
+    @app.callback(
+    Output('graph-universo', 'figure'), 
+    Output('graph-historico', 'figure'), 
+    Output('graph-ganadores', 'figure'), 
+    Output('graph-scatter-score-bolsa', 'figure'), 
+    Output('notification-container', 'children', allow_duplicate=True), 
+    Input('btn-refresh-graficos', 'n_clicks'), 
+    prevent_initial_call=True
+    )
     def update_all_graphs(n_clicks):
         if not fue_un_clic_real('btn-refresh-graficos'): return no_update, no_update, no_update, no_update, no_update
         from modules.database import read_historico_from_db, count_omega_class
@@ -403,25 +431,33 @@ if __name__ == "__main__":
         fig_universo = create_donut_chart([total_omega_class_int, C(39, 6) - total_omega_class_int], ['Clase Omega', 'Otras'], 'Universo')
         df_historico = read_historico_from_db()
         if df_historico.empty: return no_update, empty_fig, empty_fig, empty_fig, dbc.Alert("Histórico vacío.", color="warning")
+        
+        # --- LÓGICA DE GRÁFICOS CORREGIDA ---
         historico_counts = df_historico['es_omega'].value_counts()
         fig_historico = create_donut_chart([historico_counts.get(1, 0), historico_counts.get(0, 0)], ['Omega', 'No Omega'], 'Sorteos Históricos')
-        df_ganadores = df_historico[df_historico['bolsa_ganada'] == 1]
+        
+        # Filtramos por el nuevo flag 'es_ganador'
+        df_ganadores = df_historico[df_historico['es_ganador'] == 1].copy()
         ganadores_counts = df_ganadores['es_omega'].value_counts()
         fig_ganadores = create_donut_chart([ganadores_counts.get(1, 0), ganadores_counts.get(0, 0)], ['Omega', 'No Omega'], 'Sorteos con Premio')
-        df_scatter = df_ganadores.copy()
+        
+        df_scatter = df_ganadores
         if df_scatter.empty: fig_scatter = empty_fig.update_layout(title_text="No hay sorteos con premio mayor")
         else:
             df_scatter['Clase'] = df_scatter['es_omega'].apply(lambda x: 'Omega' if x == 1 else 'No Omega')
             df_scatter['combinacion_str'] = df_scatter[['r1', 'r2', 'r3', 'r4', 'r5', 'r6']].astype(str).agg('-'.join, axis=1)
+            
+            # Usamos la columna 'bolsa_ganada' para el eje Y, que ahora contiene el monto correcto
             fig_scatter = px.scatter(
-                df_scatter, x="omega_score", y="bolsa", color="Clase",
+                df_scatter, x="omega_score", y="bolsa_ganada", color="Clase",
                 color_discrete_map={'Omega': '#3b71ca', 'No Omega': '#dc3545'},
                 template="simple_white", title="Comparativa de Sorteos con Premio Mayor",
-                labels={"omega_score": "Omega Score", "bolsa": "Bolsa Acumulada (MXN)"},
+                labels={"omega_score": "Omega Score", "bolsa_ganada": "Bolsa Ganada (MXN)"},
                 hover_data=['concurso', 'fecha', 'combinacion_str']
             )
             fig_scatter.update_layout(title_x=0.5, legend_title_text='', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             fig_scatter.update_traces(marker=dict(size=10, opacity=0.7, line=dict(width=1, color='DarkSlateGrey')))
+        
         return fig_universo, fig_historico, fig_ganadores, fig_scatter, None
 
     @app.callback(Output('graph-trayectoria-umbrales', 'figure'), Input('btn-refresh-trayectoria', 'n_clicks'), Input('btn-nav-trayectoria', 'n_clicks'))
