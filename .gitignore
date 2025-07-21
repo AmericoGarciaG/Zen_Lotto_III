@@ -33251,3 +33251,5 @@ cache/cache.db
 .venv/Scripts/get_gprof
 .venv/Scripts/get_objgraph
 .venv/Scripts/undill
+cache/cache.db-shm
+cache/cache.db-wal

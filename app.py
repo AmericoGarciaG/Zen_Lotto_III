@@ -484,6 +484,6 @@ if __name__ == "__main__":
 
     import os
     if os.environ.get("DOCKER_ENV") is None:
-        Timer(1, open_browser).start()
+        Timer(2, open_browser).start()
     
     app.run(debug=False, host='0.0.0.0', port='8050')
