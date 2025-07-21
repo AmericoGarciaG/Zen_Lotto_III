@@ -10,7 +10,29 @@ from utils import state_manager
 
 logger = logging.getLogger(__name__)
 
-# --- (Las funciones auxiliares como get_frequencies, evaluate_combination, etc., no cambian) ---
+_historical_draws_set_cache = None
+
+def _get_historical_draws_set():
+    """
+    Carga y cachea el set de combinaciones históricas para una comprobación rápida.
+    """
+    global _historical_draws_set_cache
+    if _historical_draws_set_cache is not None:
+        return _historical_draws_set_cache
+    
+    logger.info("Caching historical draws set for the first time...")
+    df_historico = db.read_historico_from_db()
+    if df_historico.empty:
+        _historical_draws_set_cache = set()
+    else:
+        result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+        # Convertimos a numpy para velocidad, ordenamos y convertimos a tupla para el set
+        np_draws = df_historico[result_columns].to_numpy()
+        _historical_draws_set_cache = {tuple(sorted(row)) for row in np_draws}
+    
+    logger.info(f"Cached {len(_historical_draws_set_cache)} historical draws.")
+    return _historical_draws_set_cache
+
 _frequencies_cache = None
 def get_frequencies():
     global _frequencies_cache
@@ -35,6 +57,9 @@ def _calculate_subsequence_affinity(combination, freqs, size):
     return total_affinity
 
 def evaluate_combination(combination, freqs):
+    """
+    Evalúa una combinación y también comprueba si ha salido históricamente.
+    """
     if not isinstance(combination, list) or len(set(combination)) != 6: return {"error": "Entrada inválida."}
     af_p = _calculate_subsequence_affinity(combination, freqs, 2)
     af_t = _calculate_subsequence_affinity(combination, freqs, 3)
@@ -46,8 +71,12 @@ def evaluate_combination(combination, freqs):
     s_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
     s_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
     s_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
+
+    historical_set = _get_historical_draws_set()
+    ha_salido = tuple(sorted(combination)) in historical_set
+
     return {
-        "error": None, "esOmega": es_omega, "omegaScore": s_q + s_t + s_p,
+        "error": None, "esOmega": es_omega, "omegaScore": s_q + s_t + s_p, "haSalido": ha_salido,
         "combinacion": sorted(combination), "afinidadPares": af_p, "afinidadTercias": af_t, "afinidadCuartetos": af_q,
         "criterios": {"pares": {"cumple": c_p, "score": af_p, "umbral": config.UMBRAL_PARES},
                       "tercias": {"cumple": c_t, "score": af_t, "umbral": config.UMBRAL_TERCIAS},
