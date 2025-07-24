@@ -1,6 +1,7 @@
 import dash_bootstrap_components as dbc
 from dash import html, dcc, dash_table
 import plotly.graph_objects as go
+import config
 
 def create_header():
     return html.Div(
@@ -12,21 +13,22 @@ def create_header():
     )
 
 def create_navigation():
+    buttons = [
+        dbc.Button("GENERADOR OMEGA", id="btn-nav-generador", className="nav-button"),
+        dbc.Button("GRÁFICOS", id="btn-nav-graficos", className="nav-button"),
+        dbc.Button("VISOR HISTÓRICOS", id="btn-nav-historicos", className="nav-button"),
+        dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"),
+        dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
+    ]
+    
+    # Si el modo depuración está activo, insertamos el botón de Monitoreo
+    if config.DEBUG_MODE:
+        buttons.insert(3, dbc.Button("MONITOREO", id="btn-nav-monitoreo", className="nav-button"))
+    
     return dbc.Row(
         dbc.Col(
             html.Div(
-                dbc.ButtonGroup(
-                    [
-                        dbc.Button("GENERADOR OMEGA", id="btn-nav-generador", className="nav-button"),
-                        dbc.Button("GRÁFICOS", id="btn-nav-graficos", className="nav-button"),
-                        dbc.Button("VISOR HISTÓRICOS", id="btn-nav-historicos", className="nav-button"),
-                        # --- NUEVA PESTAÑA ---
-                        dbc.Button("ANÁLISIS DE TRAYECTORIA", id="btn-nav-trayectoria", className="nav-button"),
-                        dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"),
-                        dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
-                    ],
-                    id="navigation-group",
-                ),
+                dbc.ButtonGroup(buttons, id="navigation-group"),
                 className="nav-pill-container"
             ),
             width="auto"
@@ -186,19 +188,48 @@ def create_graficos_view():
             )
         ])
     ])
-
-def create_trayectoria_view():
-    """Crea el layout para la pestaña de Análisis de Trayectoria."""
-    return html.Div([
-        html.H3("Análisis de Trayectoria de Umbrales", className="text-center text-dark mb-4"),
-        html.P("Esta visualización muestra cómo los umbrales óptimos para Pares, Tercias y Cuartetos han evolucionado a lo largo del tiempo, recalculados en cada bloque de sorteos.", className="text-center text-muted"),
-        dbc.Row(dbc.Col(
-            dbc.Button("Cargar/Refrescar Gráfico de Trayectoria", id="btn-refresh-trayectoria", className="mb-3", color="primary")
-        ), justify="end"),
-        
-        dbc.Card(
-            dbc.CardBody(dcc.Graph(id='graph-trayectoria-umbrales'))
+def create_monitoring_view():
+    """Crea el layout para la nueva pestaña de Monitoreo Estadístico."""
+    
+    def create_graph_card(graph_id, title, subtitle):
+        return dbc.Card(
+            dbc.CardBody([
+                html.H5(title, className="card-title"),
+                html.H6(subtitle, className="card-subtitle text-muted mb-3"),
+                dcc.Graph(id=graph_id)
+            ]),
+            className="mb-4"
         )
+
+    return html.Div([
+        html.H3("Panel de Control de Salud y Monitoreo Estadístico", className="text-center text-dark mb-4"),
+        html.P("Esta sección permite vigilar la consistencia del modelo a lo largo del tiempo. "
+               "Cualquier salto o comportamiento anómalo en estas curvas puede indicar un cambio en la naturaleza del sorteo "
+               "o un efecto secundario de una modificación en el código.", className="text-center text-muted"),
+        dbc.Row(dbc.Col(
+            dbc.Button("Generar/Refrescar Gráficos de Monitoreo", id="btn-refresh-monitoring", className="mb-4", color="primary", style={'width': '100%'})
+        )),
+        
+        dbc.Row([
+            dbc.Col(create_graph_card(
+                'graph-affinity-trajectory', 
+                "Evolución de la Distribución de Afinidades",
+                "Muestra la media (línea sólida) y el rango (mín/máx) de las afinidades para todos los sorteos históricos en cada punto."
+            ), width=12),
+        ]),
+        
+        dbc.Row([
+            dbc.Col(create_graph_card(
+                'graph-freq-trajectory', 
+                "Evolución de las Frecuencias Base",
+                "Curvas de crecimiento del modelo estadístico. Deberían aplanarse con el tiempo."
+            ), md=6),
+            dbc.Col(create_graph_card(
+                'graph-threshold-trajectory', 
+                "Evolución de Umbrales Óptimos",
+                "Resultado de la optimización de ML en cada punto de la trayectoria."
+            ), md=6),
+        ]),
     ])
 
 def create_layout():

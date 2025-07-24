@@ -49,6 +49,42 @@ def save_historico_to_db(df, mode='replace'):
         """)
         logger.info(f"Asegurada la existencia de la tabla 'umbrales_trayectoria'.")
         
+        # 1. Crear la tabla para la trayectoria de las FRECUENCIAS
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS frecuencias_trayectoria (
+                ultimo_concurso_usado INTEGER PRIMARY KEY,
+                total_pares_unicos INTEGER NOT NULL,
+                suma_freq_pares INTEGER NOT NULL,
+                total_tercias_unicas INTEGER NOT NULL,
+                suma_freq_tercias INTEGER NOT NULL,
+                total_cuartetos_unicos INTEGER NOT NULL,
+                suma_freq_cuartetos INTEGER NOT NULL,
+                fecha_calculo DATETIME
+            );
+        """)
+        logger.info("Asegurada la existencia de la tabla 'frecuencias_trayectoria'.")
+
+        # 2. Crear la tabla para la trayectoria de las AFINIDADES
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS afinidades_trayectoria (
+                ultimo_concurso_usado INTEGER PRIMARY KEY,
+                afin_pares_media REAL NOT NULL,
+                afin_pares_mediana REAL NOT NULL,
+                afin_pares_min INTEGER NOT NULL,
+                afin_pares_max INTEGER NOT NULL,
+                afin_tercias_media REAL NOT NULL,
+                afin_tercias_mediana REAL NOT NULL,
+                afin_tercias_min INTEGER NOT NULL,
+                afin_tercias_max INTEGER NOT NULL,
+                afin_cuartetos_media REAL NOT NULL,
+                afin_cuartetos_mediana REAL NOT NULL,
+                afin_cuartetos_min INTEGER NOT NULL,
+                afin_cuartetos_max INTEGER NOT NULL,
+                fecha_calculo DATETIME
+            );
+        """)
+        logger.info("Asegurada la existencia de la tabla 'afinidades_trayectoria'.")
+        
         df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
         conn.commit()
         conn.close()
@@ -245,12 +281,50 @@ def read_trajectory_data():
         query = f"SELECT * FROM umbrales_trayectoria ORDER BY ultimo_concurso_usado ASC"
         df = pd.read_sql_query(query, conn)
         conn.close()
-        # --- LOGGING DE DEPURACIÓN ---
         logger.info(f"Función 'read_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
+        # --- FORZAR TIPOS ---
         if not df.empty:
-            logger.info("Primeras filas de datos de trayectoria:\n" + df.head().to_string())
-        # ---------------------------
+            df['ultimo_concurso_usado'] = pd.to_numeric(df['ultimo_concurso_usado'], errors='coerce')
+            df['umbral_pares'] = pd.to_numeric(df['umbral_pares'], errors='coerce')
+            df['umbral_tercias'] = pd.to_numeric(df['umbral_tercias'], errors='coerce')
+            df['umbral_cuartetos'] = pd.to_numeric(df['umbral_cuartetos'], errors='coerce')
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_trajectory_data': {e}", exc_info=True)
+        return pd.DataFrame()
+    
+def read_freq_trajectory_data():
+    """Lee la tabla 'frecuencias_trayectoria' y la devuelve como un DataFrame."""
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        query = "SELECT * FROM frecuencias_trayectoria ORDER BY ultimo_concurso_usado ASC"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        logger.info(f"Función 'read_freq_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
+        # --- FORZAR TIPOS ---
+        if not df.empty:
+            for col in df.columns:
+                if col != 'fecha_calculo':
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
+    except (pd.errors.DatabaseError, Exception) as e:
+        logger.error(f"Error en 'read_freq_trajectory_data': {e}", exc_info=True)
+        return pd.DataFrame()
+
+def read_affinity_trajectory_data():
+    """Lee la tabla 'afinidades_trayectoria' y la devuelve como un DataFrame."""
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        query = "SELECT * FROM afinidades_trayectoria ORDER BY ultimo_concurso_usado ASC"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        logger.info(f"Función 'read_affinity_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
+        # --- FORZAR TIPOS ---
+        if not df.empty:
+            for col in df.columns:
+                if col != 'fecha_calculo':
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
+    except (pd.errors.DatabaseError, Exception) as e:
+        logger.error(f"Error en 'read_affinity_trajectory_data': {e}", exc_info=True)
         return pd.DataFrame()

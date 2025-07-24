@@ -112,18 +112,18 @@ if __name__ == "__main__":
         Input("btn-nav-generador", "n_clicks"),
         Input("btn-nav-graficos", "n_clicks"),
         Input("btn-nav-historicos", "n_clicks"),
-        Input("btn-nav-trayectoria", "n_clicks"),
+        Input("btn-nav-monitoreo", "n_clicks"),
         Input("btn-nav-registros", "n_clicks"),
         Input("btn-nav-configuracion", "n_clicks"),
     )
-    def render_view_content(gen, graf, hist, tray, reg, conf):
+    def render_view_content(gen, graf, hist, mon, reg, conf):
         from modules.presentation import (
             create_generador_view,
             create_configuracion_view,
             create_registros_view,
             create_historicos_view,
             create_graficos_view,
-            create_trayectoria_view,
+            create_monitoring_view,
         )
 
         triggered_id = ctx.triggered_id or "btn-nav-generador"
@@ -131,36 +131,36 @@ if __name__ == "__main__":
             return create_configuracion_view()
         elif triggered_id == "btn-nav-registros":
             return create_registros_view()
+        elif triggered_id == "btn-nav-monitoreo":
+            return create_monitoring_view()
         elif triggered_id == "btn-nav-historicos":
             return create_historicos_view()
         elif triggered_id == "btn-nav-graficos":
             return create_graficos_view()
-        elif triggered_id == "btn-nav-trayectoria":
-            return create_trayectoria_view()
         return create_generador_view()
 
     @app.callback(
         Output("btn-nav-generador", "className"),
         Output("btn-nav-graficos", "className"),
         Output("btn-nav-historicos", "className"),
-        Output("btn-nav-trayectoria", "className"),
+        Output("btn-nav-monitoreo", "className"),
         Output("btn-nav-registros", "className"),
         Output("btn-nav-configuracion", "className"),
         Input("btn-nav-generador", "n_clicks"),
         Input("btn-nav-graficos", "n_clicks"),
         Input("btn-nav-historicos", "n_clicks"),
-        Input("btn-nav-trayectoria", "n_clicks"),
+        Input("btn-nav-monitoreo", "n_clicks"),
         Input("btn-nav-registros", "n_clicks"),
         Input("btn-nav-configuracion", "n_clicks"),
     )
-    def update_nav_buttons_style(gen, graf, hist, tray, reg, conf):
+    def update_nav_buttons_style(gen, graf, hist, mon, reg, conf):
         triggered_id = ctx.triggered_id or "btn-nav-generador"
         base_class = "nav-button"
         styles = {
             "generador": base_class,
             "graficos": base_class,
             "historicos": base_class,
-            "trayectoria": base_class,
+            "monitoreo": base_class,
             "registros": base_class,
             "configuracion": base_class,
         }
@@ -171,7 +171,8 @@ if __name__ == "__main__":
             styles["generador"] += " active"
         return tuple(styles.values())
 
-    # --- Callbacks de Configuración ---
+        # --- Callbacks de Configuración ---
+
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-gen-historico", "n_clicks"),
@@ -861,38 +862,100 @@ if __name__ == "__main__":
         return fig_universo, fig_historico, fig_ganadores, fig_scatter, None
 
     @app.callback(
-        Output("graph-trayectoria-umbrales", "figure"),
-        Input("btn-refresh-trayectoria", "n_clicks"),
-        Input("btn-nav-trayectoria", "n_clicks"),
+        Output('graph-affinity-trajectory', 'figure'),
+        Output('graph-freq-trajectory', 'figure'),
+        Output('graph-threshold-trajectory', 'figure'),
+        Input('btn-refresh-monitoring', 'n_clicks'),
+        Input('btn-nav-monitoreo', 'n_clicks')
     )
-    def update_trajectory_graph(refresh_clicks, nav_clicks):
-        if ctx.triggered_id in ["btn-refresh-trayectoria", "btn-nav-trayectoria"]:
-            from modules.database import read_trajectory_data
+    def update_monitoring_graphs(refresh_clicks, nav_clicks):
+        if not ctx.triggered_id:
+            return no_update, no_update, no_update
 
-            df_trajectory = read_trajectory_data()
-            if df_trajectory.empty:
-                fig = go.Figure()
-                fig.update_layout(
-                    title_text="No hay datos de trayectoria. Ejecute 'generate_trajectory.py'",
-                    title_x=0.5,
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                )
-                return fig
-            fig = px.line(
-                df_trajectory,
-                x="ultimo_concurso_usado",
-                y=["umbral_pares", "umbral_tercias", "umbral_cuartetos"],
-                template="simple_white",
-                labels={
-                    "ultimo_concurso_usado": "Sorteo Histórico",
-                    "value": "Valor del Umbral",
-                },
-                title="Evolución de Umbrales Óptimos",
+        from modules.database import read_affinity_trajectory_data, read_freq_trajectory_data, read_trajectory_data
+        from modules.omega_logic import C
+        from plotly.subplots import make_subplots
+
+        df_affinity = read_affinity_trajectory_data()
+        df_freq = read_freq_trajectory_data()
+        df_threshold = read_trajectory_data()
+        
+        empty_fig = go.Figure().update_layout(
+            title_text="No hay datos de trayectoria. Ejecute 'generate_trajectory.py'", 
+            title_x=0.5, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+        )
+
+        # Gráfico de Afinidades (sin cambios)
+        if df_affinity.empty:
+            fig_affinity = empty_fig
+        else:
+            fig_affinity = make_subplots(rows=3, cols=1, shared_xaxes=True, subplot_titles=('Afinidad de Cuartetos', 'Afinidad de Tercias', 'Afinidad de Pares'))
+            levels = [('cuartetos', 1), ('tercias', 2), ('pares', 3)]
+            colors_affinity = {'media': '#1f77b4', 'rango': 'rgba(31,119,180,0.2)'}
+            for level, row in levels:
+                fig_affinity.add_trace(go.Scatter(x=df_affinity['ultimo_concurso_usado'], y=df_affinity[f'afin_{level}_max'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=row, col=1)
+                fig_affinity.add_trace(go.Scatter(x=df_affinity['ultimo_concurso_usado'], y=df_affinity[f'afin_{level}_min'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=colors_affinity['rango'], name='Rango (Min-Max)', hoverinfo='skip'), row=row, col=1)
+                fig_affinity.add_trace(go.Scatter(x=df_affinity['ultimo_concurso_usado'], y=df_affinity[f'afin_{level}_media'], mode='lines', line=dict(color=colors_affinity['media'], width=2), name='Media'), row=row, col=1)
+            fig_affinity.update_layout(height=700, template='simple_white', showlegend=False)
+
+        # Gráfico de Frecuencias Mejorado
+        if df_freq.empty:
+            fig_freq = empty_fig
+        else:
+            MAX_PARES = C(39, 2)
+            MAX_TERCIAS = C(39, 3)
+            MAX_CUARTETOS = C(39, 4)
+            
+            # --- INICIO DE LA MODIFICACIÓN ---
+            # Definir un mapa de colores explícito para mantener la consistencia
+            color_map = {
+                'Pares': px.colors.qualitative.Plotly[0],
+                'Tercias': px.colors.qualitative.Plotly[1],
+                'Cuartetos': px.colors.qualitative.Plotly[2]
+            }
+
+            fig_freq = make_subplots(
+                rows=2, cols=1, shared_xaxes=True, 
+                subplot_titles=('Conteo Absoluto de Combinaciones Únicas', 'Porcentaje del Universo Descubierto (%)'),
+                vertical_spacing=0.1
             )
-            fig.update_layout(title_x=0.5, legend_title_text="Afinidad")
-            return fig
-        return no_update
+
+            # Subplot 1: Conteo Absoluto
+            fig_freq.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=df_freq['total_pares_unicos'], name='Pares', line=dict(color=color_map['Pares'])), row=1, col=1)
+            fig_freq.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=df_freq['total_tercias_unicas'], name='Tercias', line=dict(color=color_map['Tercias'])), row=1, col=1)
+            fig_freq.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=df_freq['total_cuartetos_unicos'], name='Cuartetos', line=dict(color=color_map['Cuartetos'])), row=1, col=1)
+
+            # Subplot 2: Porcentaje del Universo (usando los mismos colores)
+            fig_freq.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=(df_freq['total_pares_unicos'] / MAX_PARES) * 100, name='Pares (%)', showlegend=False, line=dict(color=color_map['Pares'])), row=2, col=1)
+            fig_freq.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=(df_freq['total_tercias_unicas'] / MAX_TERCIAS) * 100, name='Tercias (%)', showlegend=False, line=dict(color=color_map['Tercias'])), row=2, col=1)
+            fig_freq.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=(df_freq['total_cuartetos_unicos'] / MAX_CUARTETOS) * 100, name='Cuartetos (%)', showlegend=False, line=dict(color=color_map['Cuartetos'])), row=2, col=1)
+            # --- FIN DE LA MODIFICACIÓN ---
+            
+            fig_freq.update_layout(
+                height=600, template='simple_white', legend_title_text='Nivel',
+                annotations=[
+                    go.layout.Annotation(
+                        text=f"Máximos Teóricos:<br>Pares: {MAX_PARES}<br>Tercias: {MAX_TERCIAS:,}<br>Cuartetos: {MAX_CUARTETOS:,}",
+                        align='left', showarrow=False, xref='paper', yref='paper', x=1.05, y=1
+                    )
+                ]
+            )
+            fig_freq.update_yaxes(title_text='Conteo Absoluto', row=1, col=1)
+            fig_freq.update_yaxes(title_text='% Descubierto', row=2, col=1, range=[0, 101]) # Añadido rango 0-101
+            fig_freq.update_xaxes(title_text='Sorteo Histórico', row=2, col=1)
+
+        # Gráfico de Umbrales (sin cambios)
+        if df_threshold.empty:
+            fig_threshold = empty_fig
+        else:
+            fig_threshold = px.line(
+                df_threshold, x='ultimo_concurso_usado', y=['umbral_pares', 'umbral_tercias', 'umbral_cuartetos'],
+                template='simple_white',
+                labels={'ultimo_concurso_usado': 'Sorteo Histórico', 'value': 'Valor del Umbral'}
+            )
+            fig_threshold.update_layout(legend_title_text='Afinidad')
+
+        return fig_affinity, fig_freq, fig_threshold
 
     # 5. INICIAR EL SERVIDOR
     def open_browser():

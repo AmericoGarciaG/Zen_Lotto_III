@@ -2,19 +2,24 @@ import pandas as pd
 import logging
 import time
 import sqlite3
-import sys # Para leer argumentos de línea de comandos
+import sys
+import numpy as np
+import multiprocessing as mp
 
 # --- Importar nuestros módulos ---
 from utils.logger_config import setup_logger
 setup_logger()
 
+# Importar nuestro Pool personalizado para permitir paralelización anidada
+from utils.parallel_utils import NoDaemonPool
+
 from modules import database as db
 from modules import ml_optimizer
+from modules.omega_logic import _calculate_subsequence_affinity
 import config
 
 logger = logging.getLogger(__name__)
 
-# --- (Las funciones de ayuda calculate_frequencies_for_subset y save_trajectory_point no cambian) ---
 def calculate_frequencies_for_subset(df_subset):
     from collections import Counter
     from itertools import combinations
@@ -27,10 +32,16 @@ def calculate_frequencies_for_subset(df_subset):
             freq_triplets.update(combinations(draw, 3))
             freq_quartets.update(combinations(draw, 4))
         except (ValueError, TypeError): continue
-    return {"pares": freq_pairs, "tercias": freq_triplets, "cuartetos": freq_quartets}
+        
+    # --- CORRECCIÓN CLAVE: Devolver claves como tuplas nativas ---
+    # La versión anterior devolvía strings str(k), lo que causaba el bug.
+    return {
+        "pares": dict(freq_pairs),
+        "tercias": dict(freq_triplets),
+        "cuartetos": dict(freq_quartets)
+    }
 
 def save_trajectory_point(concurso_num, report):
-    """Guarda un único resultado de optimización en la BD, asegurando los tipos de datos."""
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
@@ -41,36 +52,134 @@ def save_trajectory_point(concurso_num, report):
              cobertura_historica, cobertura_universal_estimada, fecha_calculo)
             VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
         """
-        
-        # --- INICIO DE LA CORRECCIÓN DE TIPOS ---
         thresholds = report['new_thresholds']
         params = (
-            int(concurso_num), # Convertimos explícitamente a int de Python
-            int(thresholds.get('pares', 0)),
-            int(thresholds.get('tercias', 0)),
-            int(thresholds.get('cuartetos', 0)),
-            float(report.get('cobertura_historica', 0.0)), # Convertimos a float
+            int(concurso_num), int(thresholds.get('pares', 0)),
+            int(thresholds.get('tercias', 0)), int(thresholds.get('cuartetos', 0)),
+            float(report.get('cobertura_historica', 0.0)),
             float(report.get('cobertura_universal_estimada', 0.0))
         )
-        # --- FIN DE LA CORRECCIÓN ---
-
         cursor.execute(query, params)
         conn.commit()
     except Exception as e:
-        logger.error(f"Error guardando punto de trayectoria para {concurso_num}: {e}")
+        logger.error(f"Error guardando punto de trayectoria de umbrales para {concurso_num}: {e}")
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
-# --- Función Principal del Script Modificada ---
+def save_frequency_trajectory_point(concurso_num, metrics):
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.cursor()
+        query = """
+            INSERT OR REPLACE INTO frecuencias_trayectoria 
+            (ultimo_concurso_usado, total_pares_unicos, suma_freq_pares, 
+             total_tercias_unicas, suma_freq_tercias, total_cuartetos_unicos, 
+             suma_freq_cuartetos, fecha_calculo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        """
+        params = (
+            int(concurso_num),
+            metrics['total_pares_unicos'], metrics['suma_freq_pares'],
+            metrics['total_tercias_unicas'], metrics['suma_freq_tercias'],
+            metrics['total_cuartetos_unicos'], metrics['suma_freq_cuartetos']
+        )
+        cursor.execute(query, params)
+        conn.commit()
+        # logger.info(f"Punto de trayectoria de frecuencias guardado para concurso {concurso_num}.")
+    except Exception as e:
+        logger.error(f"Error guardando punto de trayectoria de frecuencias para {concurso_num}: {e}")
+    finally:
+        if conn: conn.close()
+
+def save_affinity_trajectory_point(concurso_num, stats):
+    """Guarda las estadísticas de las afinidades en la BD."""
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.cursor()
+        query = """
+            INSERT OR REPLACE INTO afinidades_trayectoria 
+            (ultimo_concurso_usado, afin_pares_media, afin_pares_mediana, afin_pares_min, afin_pares_max, 
+             afin_tercias_media, afin_tercias_mediana, afin_tercias_min, afin_tercias_max, 
+             afin_cuartetos_media, afin_cuartetos_mediana, afin_cuartetos_min, afin_cuartetos_max, fecha_calculo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        """
+        params = (
+            int(concurso_num),
+            stats['pares']['media'], stats['pares']['mediana'], stats['pares']['min'], stats['pares']['max'],
+            stats['tercias']['media'], stats['tercias']['mediana'], stats['tercias']['min'], stats['tercias']['max'],
+            stats['cuartetos']['media'], stats['cuartetos']['mediana'], stats['cuartetos']['min'], stats['cuartetos']['max']
+        )
+        cursor.execute(query, params)
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error guardando punto de trayectoria de afinidades para {concurso_num}: {e}")
+    finally:
+        if conn: conn.close()
+
+def process_trajectory_block(args):
+    """
+    Función trabajadora que procesa un único bloque de la trayectoria.
+    """
+    end_index, df_full_historico = args
+    iter_start_time = time.time()
+    
+    df_subset = df_full_historico.head(end_index)
+    ultimo_concurso = int(df_subset.iloc[-1]['concurso'])
+    
+    logging.info(f"--- [Worker] Iniciando bloque hasta concurso {ultimo_concurso} ({end_index} sorteos) ---")
+    
+    # 1. Cálculo y guardado de métricas de FRECUENCIAS
+    freqs_subset = calculate_frequencies_for_subset(df_subset)
+    freq_metrics = {
+        'total_pares_unicos': len(freqs_subset['pares']), 'suma_freq_pares': sum(freqs_subset['pares'].values()),
+        'total_tercias_unicas': len(freqs_subset['tercias']), 'suma_freq_tercias': sum(freqs_subset['tercias'].values()),
+        'total_cuartetos_unicos': len(freqs_subset['cuartetos']), 'suma_freq_cuartetos': sum(freqs_subset['cuartetos'].values())
+    }
+    save_frequency_trajectory_point(ultimo_concurso, freq_metrics)
+    
+    # 2. Cálculo y guardado de estadísticas de AFINIDADES
+    afin_p, afin_t, afin_q = [], [], []
+    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+    for _, row in df_subset.iterrows():
+        combo = sorted([int(row[col]) for col in result_columns])
+        afin_p.append(_calculate_subsequence_affinity(combo, freqs_subset, 2))
+        afin_t.append(_calculate_subsequence_affinity(combo, freqs_subset, 3))
+        afin_q.append(_calculate_subsequence_affinity(combo, freqs_subset, 4))
+    
+    # --- MODIFICACIÓN CLAVE: Convertir explícitamente los tipos de numpy a Python nativo ---
+    affinity_stats = {
+        'pares': {
+            'media': float(np.mean(afin_p)), 'mediana': float(np.median(afin_p)), 
+            'min': int(np.min(afin_p)), 'max': int(np.max(afin_p))
+        },
+        'tercias': {
+            'media': float(np.mean(afin_t)), 'mediana': float(np.median(afin_t)), 
+            'min': int(np.min(afin_t)), 'max': int(np.max(afin_t))
+        },
+        'cuartetos': {
+            'media': float(np.mean(afin_q)), 'mediana': float(np.median(afin_q)), 
+            'min': int(np.min(afin_q)), 'max': int(np.max(afin_q))
+        }
+    }
+    save_affinity_trajectory_point(ultimo_concurso, affinity_stats)
+    
+    # 3. Cálculo y guardado de UMBRALES
+    success, _, report = ml_optimizer.run_optimization(df_subset, freqs_subset)
+    
+    if success and isinstance(report, dict) and 'new_thresholds' in report:
+        save_trajectory_point(ultimo_concurso, report)
+    else:
+        logging.error(f"La optimización de umbrales falló para el bloque hasta el sorteo {ultimo_concurso}.")
+    
+    iter_time = time.time() - iter_start_time
+    logging.info(f"--- [Worker] Bloque hasta concurso {ultimo_concurso} completado en {iter_time:.2f} segundos. ---")
+    return True
+
 def main(block_size=100):
-    """
-    Ejecuta el análisis de Walk-Forward por bloques para generar la trayectoria.
-    Args:
-        block_size (int): El número de sorteos a añadir en cada iteración.
-    """
     logger.info("="*60)
-    logger.info("INICIANDO SCRIPT DE GENERACIÓN DE TRAYECTORIA (POR BLOQUES)")
+    logger.info("INICIANDO SCRIPT DE GENERACIÓN DE TRAYECTORIA (ARQUITECTURA ANIDADA)")
     logger.info(f"Tamaño de bloque configurado: {block_size} sorteos")
     logger.info("="*60)
     
@@ -82,40 +191,27 @@ def main(block_size=100):
     df_full_historico = df_full_historico.sort_values(by='concurso').reset_index(drop=True)
     total_sorteos = len(df_full_historico)
     
-    start_point = 50 # Base estadística mínima
-    
-    # Creamos los puntos de corte para el análisis por bloques
+    start_point = 50 
     analysis_points = list(range(start_point, total_sorteos, block_size))
-    # Nos aseguramos de que el último sorteo siempre se incluya
     if total_sorteos not in analysis_points:
         analysis_points.append(total_sorteos)
 
-    logger.info(f"Se analizarán {len(analysis_points)} puntos de la trayectoria: {analysis_points}")
+    logger.info(f"Se analizarán {len(analysis_points)} puntos de la trayectoria en paralelo.")
+    
+    worker_args = [(point, df_full_historico) for point in analysis_points]
     
     script_start_time = time.time()
     
-    for i, end_index in enumerate(analysis_points):
-        iter_start_time = time.time()
-        
-        # Obtenemos el subconjunto de datos para esta iteración (hasta el punto de corte)
-        df_subset = df_full_historico.head(end_index)
-        ultimo_concurso = df_subset.iloc[-1]['concurso']
-        
-        logger.info(f"--- Procesando Bloque {i+1}/{len(analysis_points)} (hasta concurso {ultimo_concurso}, {end_index} sorteos) ---")
-        
-        freqs_subset = calculate_frequencies_for_subset(df_subset)
-        success, _, report = ml_optimizer.run_optimization(df_subset, freqs_subset)
-        
-        if success and isinstance(report, dict) and 'new_thresholds' in report:
-            save_trajectory_point(ultimo_concurso, report)
-            ch = report.get('cobertura_historica', 0)
-            cu = report.get('cobertura_universal_estimada', 0)
-            logger.info(f"Punto de trayectoria guardado. CH: {ch:.1%}, CU: {cu:.2%}")
-        else:
-            logger.error(f"La optimización falló para el bloque hasta el sorteo {ultimo_concurso}.")
-        
-        iter_time = time.time() - iter_start_time
-        logger.info(f"Bloque completado en {iter_time:.2f} segundos.")
+    n_processes = min(mp.cpu_count(), 16)
+    logger.info(f"Creando un Pool NoDaemon con {n_processes} procesos...")
+    
+    with NoDaemonPool(processes=n_processes) as pool:
+        results = pool.map(process_trajectory_block, worker_args)
+
+    if all(results):
+        logger.info("Todos los bloques de la trayectoria se procesaron con éxito.")
+    else:
+        logger.warning("Algunos bloques de la trayectoria pudieron haber fallado. Revise los logs.")
 
     script_total_time = time.time() - script_start_time
     logger.info("="*60)
@@ -123,11 +219,8 @@ def main(block_size=100):
     logger.info("="*60)
 
 if __name__ == "__main__":
-    import multiprocessing
-    multiprocessing.freeze_support()
+    mp.freeze_support()
     
-    # Leemos el tamaño del bloque desde la línea de comandos
-    # Si no se proporciona, usamos 100 por defecto.
     if len(sys.argv) > 1:
         try:
             block_size_arg = int(sys.argv[1])
@@ -136,4 +229,4 @@ if __name__ == "__main__":
             print("Error: El tamaño del bloque debe ser un número entero.")
             print("Uso: python generate_trajectory.py [tamaño_del_bloque]")
     else:
-        main() # Llama a main con el valor por defecto de 100
+        main()

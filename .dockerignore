@@ -24,3 +24,14 @@ __pycache__/
 # Archivos de sistema operativo
 .DS_Store
 Thumbs.db
+
+# Archivos de Docker
+Dockerfile
+docker-compose.yml
+
+# Cache de sistema
+cache/
+
+# Archivos persistentes
+data/
+
