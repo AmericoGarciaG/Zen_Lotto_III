@@ -30,7 +30,6 @@ def run_historical_load(last_concurso=0):
 
         logger.info("Descarga completada.")
 
-        # ... (El resto de la función de validación y procesamiento no cambia)
         if not all(col in df.columns for col in config.EXPECTED_COLUMNS):
             missing = set(config.EXPECTED_COLUMNS) - set(df.columns)
             return None, f"Error: Faltan las columnas {missing}.", False

@@ -20,11 +20,11 @@ def create_navigation():
         dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"),
         dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
     ]
-    
+
     # Si el modo depuración está activo, insertamos el botón de Monitoreo
     if config.DEBUG_MODE:
         buttons.insert(3, dbc.Button("MONITOREO", id="btn-nav-monitoreo", className="nav-button"))
-    
+
     return dbc.Row(
         dbc.Col(
             html.Div(
@@ -56,7 +56,6 @@ def create_generador_view():
             html.Ul(id='analysis-details-list', className='list-unstyled')
         ]),
         id='analysis-result-card',
-        # La clase se asignará dinámicamente, quitamos el color fijo
         className="mt-4", 
         style={'display': 'none'}
     )
@@ -77,10 +76,6 @@ def create_generador_view():
     ])
 
 def create_configuracion_view():
-    """
-    Crea la vista de configuración con los botones de acción y los
-    componentes ocultos para el feedback de progreso.
-    """
     return html.Div([
         html.H3("Configuración y Mantenimiento", className="text-center text-dark mb-4"),
         dbc.Row([
@@ -90,14 +85,13 @@ def create_configuracion_view():
             dbc.Col(dbc.Button("4. ENRIQUECER Y PRE-GENERAR", id="btn-enrich-pregen", color="dark", className="action-button"), width="auto"),
         ], justify="center", className="g-3"),
         
-        # --- NUEVOS COMPONENTES DE PROGRESO ---
         html.Div(
             [
                 html.P("Procesando, por favor espere...", id="progress-text", className="mt-4 mb-2 text-muted"),
                 dbc.Progress(id="progress-bar", value=0, striped=True, animated=True, style={"height": "20px"}),
             ],
             id="progress-container",
-            style={'display': 'none'} # Oculto por defecto
+            style={'display': 'none'}
         )
     ])
 
@@ -107,7 +101,6 @@ def create_registros_view():
         dbc.ModalFooter([dbc.Button("Cancelar", id="btn-cancel-delete"), dbc.Button("Confirmar", id="btn-confirm-delete", color="danger")]),
     ], id="modal-confirm-delete", is_open=False)
 
-    # --- NUEVO MODAL PARA LA IMPORTACIÓN ---
     import_modal = dbc.Modal([
         dbc.ModalHeader("Confirmar Importación"),
         dbc.ModalBody("Se han encontrado registros existentes. ¿Deseas sobrescribirlos con los datos del archivo de respaldo?"),
@@ -118,19 +111,16 @@ def create_registros_view():
     ], id="modal-confirm-import", is_open=False)
 
     return html.Div([
-        dcc.Store(id='store-record-to-delete', data=None), confirmation_modal, import_modal, # <-- Añadir nuevo modal
+        dcc.Store(id='store-record-to-delete', data=None), confirmation_modal, import_modal,
         html.H3("Registro de Combinaciones Omega", className="text-center text-dark mb-4"),
         
-        # --- NUEVOS BOTONES DE GESTIÓN ---
         dbc.Row([
             dbc.Col(dbc.Button("Exportar a JSON", id="btn-export-registros", color="success", outline=True), width="auto"),
             dbc.Col(dbc.Button("Importar desde JSON", id="btn-import-registros", color="info", outline=True), width="auto"),
             dbc.Col(dbc.Button("Refrescar Datos", id="btn-refresh-registros", className="ms-auto", color="primary", outline=True)),
         ], className="mb-3"),
-        # -----------------------------
         
         dash_table.DataTable(id='table-registros',
-            # ... (resto de la tabla sin cambios) ...
         )
     ])
 
@@ -157,7 +147,6 @@ def create_historicos_view():
     ])
 
 def create_graficos_view():
-    """Crea el layout para la pestaña de Gráficos y Estadísticas."""
     def create_graph_card(graph_id, title):
         return dbc.Card([
             dbc.CardHeader(html.H5(title, className="mb-0")),
@@ -170,24 +159,23 @@ def create_graficos_view():
             dbc.Button("Generar/Refrescar Gráficos", id="btn-refresh-graficos", className="mb-3", color="primary")
         ), justify="end"),
         
-        # Fila de los gráficos de dona
         dbc.Row([
             dbc.Col(create_graph_card('graph-universo', 'Clase Omega vs. Universo Total'), md=4),
             dbc.Col(create_graph_card('graph-historico', 'Clase Omega en Sorteos Históricos'), md=4),
             dbc.Col(create_graph_card('graph-ganadores', 'Clase Omega en Sorteos con Premio'), md=4),
         ]),
 
-        # --- NUEVA FILA PARA EL GRÁFICO DE DISPERSIÓN ---
         dbc.Row([
             dbc.Col(
                 dbc.Card([
                     dbc.CardHeader(html.H5("Omega Score vs. Bolsa Acumulada (Sorteos Ganadores)", className="mb-0")),
                     dbc.CardBody(dcc.Graph(id='graph-scatter-score-bolsa')),
                 ]),
-                width=12 # Ocupa todo el ancho
+                width=12
             )
         ])
     ])
+
 def create_monitoring_view():
     """Crea el layout para la nueva pestaña de Monitoreo Estadístico."""
     
