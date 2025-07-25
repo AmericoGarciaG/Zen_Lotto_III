@@ -284,10 +284,10 @@ def read_trajectory_data():
         logger.info(f"Función 'read_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
         # --- FORZAR TIPOS ---
         if not df.empty:
-            df['ultimo_concurso_usado'] = pd.to_numeric(df['ultimo_concurso_usado'], errors='coerce')
-            df['umbral_pares'] = pd.to_numeric(df['umbral_pares'], errors='coerce')
-            df['umbral_tercias'] = pd.to_numeric(df['umbral_tercias'], errors='coerce')
-            df['umbral_cuartetos'] = pd.to_numeric(df['umbral_cuartetos'], errors='coerce')
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    # Intentamos convertir a numérico, si falla, lo dejamos como está (para fechas)
+                    df[col] = pd.to_numeric(df[col], errors='ignore')
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_trajectory_data': {e}", exc_info=True)
@@ -304,8 +304,8 @@ def read_freq_trajectory_data():
         # --- FORZAR TIPOS ---
         if not df.empty:
             for col in df.columns:
-                if col != 'fecha_calculo':
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                if df[col].dtype == 'object':
+                    df[col] = pd.to_numeric(df[col], errors='ignore')
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_freq_trajectory_data': {e}", exc_info=True)
@@ -322,8 +322,8 @@ def read_affinity_trajectory_data():
         # --- FORZAR TIPOS ---
         if not df.empty:
             for col in df.columns:
-                if col != 'fecha_calculo':
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                if df[col].dtype == 'object':
+                    df[col] = pd.to_numeric(df[col], errors='ignore')
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_affinity_trajectory_data': {e}", exc_info=True)
