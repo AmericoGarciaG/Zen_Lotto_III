@@ -10,6 +10,7 @@ TABLE_NAME_HISTORICO = "historico"
 TABLE_NAME_OMEGA = "omega_class"
 TABLE_NAME_REGISTROS = "registros_omega"
 
+
 def save_historico_to_db(df, mode='replace'):
     """
     Guarda un DataFrame en la BD. También se asegura de que las otras tablas existan.
@@ -35,7 +36,6 @@ def save_historico_to_db(df, mode='replace'):
                 PRIMARY KEY (c1, c2, c3, c4, c5, c6)
             );
         """)
-
         cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS umbrales_trayectoria (
                 ultimo_concurso_usado INTEGER PRIMARY KEY,
@@ -47,9 +47,7 @@ def save_historico_to_db(df, mode='replace'):
                 fecha_calculo DATETIME
             );
         """)
-        logger.info(f"Asegurada la existencia de la tabla 'umbrales_trayectoria'.")
         
-        # 1. Crear la tabla para la trayectoria de las FRECUENCIAS
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS frecuencias_trayectoria (
                 ultimo_concurso_usado INTEGER PRIMARY KEY,
@@ -64,7 +62,6 @@ def save_historico_to_db(df, mode='replace'):
         """)
         logger.info("Asegurada la existencia de la tabla 'frecuencias_trayectoria'.")
 
-        # 2. Crear la tabla para la trayectoria de las AFINIDADES
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS afinidades_trayectoria (
                 ultimo_concurso_usado INTEGER PRIMARY KEY,
@@ -199,9 +196,7 @@ def delete_registration(combinacion_str):
     finally:
         if conn: conn.close()
 
-# --- NUEVA FUNCIÓN PARA LOS GRÁFICOS ---
 def count_omega_class():
-    """Cuenta el número total de combinaciones en la tabla omega_class."""
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
@@ -214,7 +209,6 @@ def count_omega_class():
         return 0  
 
 def export_registrations_to_json():
-    """Lee todos los registros y los guarda en un archivo JSON de respaldo."""
     try:
         df = get_all_registrations()
         if df.empty:
@@ -223,9 +217,7 @@ def export_registrations_to_json():
         if 'fecha_registro' in df.columns:
             df['fecha_registro'] = df['fecha_registro'].astype(str)
 
-        # --- MODIFICACIÓN: Usa la ruta desde config.py ---
         df.to_json(config.REGISTROS_BACKUP_FILE, orient='records', indent=4)
-        
         logger.info(f"Se han exportado {len(df)} registros a '{config.REGISTROS_BACKUP_FILE}'")
         return True, f"Se han exportado {len(df)} registros con éxito."
     except Exception as e:
@@ -233,13 +225,10 @@ def export_registrations_to_json():
         return False, "Ocurrió un error durante la exportación."
 
 def import_registrations_from_json(overwrite=False):
-    """Importa registros desde un archivo JSON, con opción de sobrescribir."""
     try:
-        # --- MODIFICACIÓN: Usa la ruta desde config.py ---
         with open(config.REGISTROS_BACKUP_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except FileNotFoundError:
-        # --- MODIFICACIÓN: Mensaje de error actualizado ---
         return 0, 0, 0, f"No se encontró el archivo de respaldo '{config.REGISTROS_BACKUP_FILE}'."
     
     conn = sqlite3.connect(config.DB_FILE)
@@ -275,33 +264,28 @@ def import_registrations_from_json(overwrite=False):
     return added_count, updated_count, len(data), message
 
 def read_trajectory_data():
-    """Lee la tabla 'umbrales_trayectoria' y la devuelve como un DataFrame."""
     try:
         conn = sqlite3.connect(config.DB_FILE)
         query = f"SELECT * FROM umbrales_trayectoria ORDER BY ultimo_concurso_usado ASC"
         df = pd.read_sql_query(query, conn)
         conn.close()
-        logger.info(f"Función 'read_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
-        # --- FORZAR TIPOS ---
+        logger.info(f"DB READ: 'read_trajectory_data' success. Found {len(df)} rows.")
         if not df.empty:
-            df['ultimo_concurso_usado'] = pd.to_numeric(df['ultimo_concurso_usado'], errors='coerce')
-            df['umbral_pares'] = pd.to_numeric(df['umbral_pares'], errors='coerce')
-            df['umbral_tercias'] = pd.to_numeric(df['umbral_tercias'], errors='coerce')
-            df['umbral_cuartetos'] = pd.to_numeric(df['umbral_cuartetos'], errors='coerce')
+            for col in df.columns:
+                if col != 'fecha_calculo':
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_trajectory_data': {e}", exc_info=True)
         return pd.DataFrame()
-    
+
 def read_freq_trajectory_data():
-    """Lee la tabla 'frecuencias_trayectoria' y la devuelve como un DataFrame."""
     try:
         conn = sqlite3.connect(config.DB_FILE)
         query = "SELECT * FROM frecuencias_trayectoria ORDER BY ultimo_concurso_usado ASC"
         df = pd.read_sql_query(query, conn)
         conn.close()
-        logger.info(f"Función 'read_freq_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
-        # --- FORZAR TIPOS ---
+        logger.info(f"DB READ: 'read_freq_trajectory_data' success. Found {len(df)} rows.")
         if not df.empty:
             for col in df.columns:
                 if col != 'fecha_calculo':
@@ -312,14 +296,12 @@ def read_freq_trajectory_data():
         return pd.DataFrame()
 
 def read_affinity_trajectory_data():
-    """Lee la tabla 'afinidades_trayectoria' y la devuelve como un DataFrame."""
     try:
         conn = sqlite3.connect(config.DB_FILE)
         query = "SELECT * FROM afinidades_trayectoria ORDER BY ultimo_concurso_usado ASC"
         df = pd.read_sql_query(query, conn)
         conn.close()
-        logger.info(f"Función 'read_affinity_trajectory_data' ejecutada. Se encontraron {len(df)} filas.")
-        # --- FORZAR TIPOS ---
+        logger.info(f"DB READ: 'read_affinity_trajectory_data' success. Found {len(df)} rows.")
         if not df.empty:
             for col in df.columns:
                 if col != 'fecha_calculo':
