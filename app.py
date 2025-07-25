@@ -9,7 +9,7 @@ import plotly.express as px
 from threading import Timer
 import webbrowser
 import diskcache
-from dash.long_callback import DiskcacheManager
+from dash import DiskcacheManager
 
 import dash
 import dash_bootstrap_components as dbc
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         __name__,
         external_stylesheets=[dbc.themes.LUX, dbc.icons.FONT_AWESOME],
         suppress_callback_exceptions=True,
-        long_callback_manager=long_callback_manager,
+        background_callback_manager=long_callback_manager,
     )
     server = app.server
 
