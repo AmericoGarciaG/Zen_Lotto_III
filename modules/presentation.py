@@ -21,7 +21,6 @@ def create_navigation():
         dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
     ]
 
-    # Si el modo depuración está activo, insertamos el botón de Monitoreo
     if config.DEBUG_MODE:
         buttons.insert(3, dbc.Button("MONITOREO", id="btn-nav-monitoreo", className="nav-button"))
 
@@ -120,8 +119,7 @@ def create_registros_view():
             dbc.Col(dbc.Button("Refrescar Datos", id="btn-refresh-registros", className="ms-auto", color="primary", outline=True)),
         ], className="mb-3"),
         
-        dash_table.DataTable(id='table-registros',
-        )
+        dash_table.DataTable(id='table-registros')
     ])
 
 def create_historicos_view():
@@ -178,7 +176,6 @@ def create_graficos_view():
 
 def create_monitoring_view():
     """Crea el layout para la nueva pestaña de Monitoreo Estadístico."""
-    
     def create_graph_card(graph_id, title, subtitle):
         return dbc.Card(
             dbc.CardBody([
@@ -191,12 +188,18 @@ def create_monitoring_view():
 
     return html.Div([
         html.H3("Panel de Control de Salud y Monitoreo Estadístico", className="text-center text-dark mb-4"),
-        html.P("Esta sección permite vigilar la consistencia del modelo a lo largo del tiempo. "
-               "Cualquier salto o comportamiento anómalo en estas curvas puede indicar un cambio en la naturaleza del sorteo "
-               "o un efecto secundario de una modificación en el código.", className="text-center text-muted"),
+        html.P("Esta sección permite vigilar la consistencia del modelo a lo largo del tiempo.", className="text-center text-muted"),
         dbc.Row(dbc.Col(
             dbc.Button("Generar/Refrescar Gráficos de Monitoreo", id="btn-refresh-monitoring", className="mb-4", color="primary", style={'width': '100%'})
         )),
+        
+        dbc.Row([
+            dbc.Col(create_graph_card(
+                'graph-freq-dist-trajectory', 
+                "Evolución de la Distribución de Frecuencias",
+                "Muestra la media (línea sólida) y el rango (mín/máx) de los valores de las frecuencias en cada punto."
+            ), width=12),
+        ]),
         
         dbc.Row([
             dbc.Col(create_graph_card(
@@ -209,8 +212,8 @@ def create_monitoring_view():
         dbc.Row([
             dbc.Col(create_graph_card(
                 'graph-freq-trajectory', 
-                "Evolución de las Frecuencias Base",
-                "Curvas de crecimiento del modelo estadístico. Deberían aplanarse con el tiempo."
+                "Crecimiento de Frecuencias Base",
+                "Curvas de crecimiento del modelo estadístico (conteos de combinaciones únicas)."
             ), md=6),
             dbc.Col(create_graph_card(
                 'graph-threshold-trajectory', 
@@ -218,6 +221,26 @@ def create_monitoring_view():
                 "Resultado de la optimización de ML en cada punto de la trayectoria."
             ), md=6),
         ]),
+        
+        # --- NUEVA SECCIÓN DESPLEGABLE ---
+        html.Hr(className="my-4"),
+        dbc.Button(
+            "Mostrar/Ocultar Análisis de Distribución Detallado",
+            id="btn-collapse-dist",
+            className="mb-3",
+            color="secondary",
+            outline=True,
+            style={'width': '100%'}
+        ),
+        dbc.Collapse(
+            dbc.Card(dbc.CardBody([
+                html.H5("Histograma de Distribución de Frecuencias (Estado Final)", className="card-title"),
+                html.H6("Muestra qué porcentaje de combinaciones ha aparecido 1 vez, 2 veces, etc. Ayuda a entender la 'rareza'.", className="card-subtitle text-muted mb-3"),
+                dcc.Graph(id='graph-freq-histogram')
+            ])),
+            id="collapse-dist-panel",
+            is_open=False,
+        ),
     ])
 
 def create_layout():

@@ -23,9 +23,9 @@ STATE_FILE = os.path.join(DATA_DIR, "system_state.json")
 REGISTROS_BACKUP_FILE = os.path.join(DATA_DIR, "registros_omega_backup.json")
 
 # Umbrales para la clasificación Omega
-UMBRAL_PARES = 420
-UMBRAL_TERCIAS = 65
-UMBRAL_CUARTETOS = 16
+UMBRAL_PARES = 20
+UMBRAL_TERCIAS = 20
+UMBRAL_CUARTETOS = 15
 
 # Habilita/deshabilita las vistas y cálculos avanzados de monitoreo
 DEBUG_MODE = True

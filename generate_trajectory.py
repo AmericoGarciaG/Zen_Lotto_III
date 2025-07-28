@@ -5,19 +5,14 @@ import sqlite3
 import sys
 import numpy as np
 import multiprocessing as mp
-
-# --- Importar nuestros módulos ---
 from utils.logger_config import setup_logger
-setup_logger()
-
-# Importar nuestro Pool personalizado para permitir paralelización anidada
 from utils.parallel_utils import NoDaemonPool
-
 from modules import database as db
 from modules import ml_optimizer
 from modules.omega_logic import _calculate_subsequence_affinity
 import config
 
+setup_logger()
 logger = logging.getLogger(__name__)
 
 def calculate_frequencies_for_subset(df_subset):
@@ -32,9 +27,6 @@ def calculate_frequencies_for_subset(df_subset):
             freq_triplets.update(combinations(draw, 3))
             freq_quartets.update(combinations(draw, 4))
         except (ValueError, TypeError): continue
-        
-    # --- CORRECCIÓN CLAVE: Devolver claves como tuplas nativas ---
-    # La versión anterior devolvía strings str(k), lo que causaba el bug.
     return {
         "pares": dict(freq_pairs),
         "tercias": dict(freq_triplets),
@@ -67,6 +59,7 @@ def save_trajectory_point(concurso_num, report):
         if conn: conn.close()
 
 def save_frequency_trajectory_point(concurso_num, metrics):
+    """Guarda las métricas de CONTEO de frecuencias en la BD."""
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
@@ -86,14 +79,12 @@ def save_frequency_trajectory_point(concurso_num, metrics):
         )
         cursor.execute(query, params)
         conn.commit()
-        # logger.info(f"Punto de trayectoria de frecuencias guardado para concurso {concurso_num}.")
     except Exception as e:
         logger.error(f"Error guardando punto de trayectoria de frecuencias para {concurso_num}: {e}")
     finally:
         if conn: conn.close()
 
 def save_affinity_trajectory_point(concurso_num, stats):
-    """Guarda las estadísticas de las afinidades en la BD."""
     conn = None
     try:
         conn = sqlite3.connect(config.DB_FILE)
@@ -118,28 +109,66 @@ def save_affinity_trajectory_point(concurso_num, stats):
     finally:
         if conn: conn.close()
 
+def save_freq_dist_trajectory_point(concurso_num, stats):
+    """Guarda las estadísticas de la distribución de valores de frecuencias en la BD."""
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        cursor = conn.cursor()
+        query = """
+            INSERT OR REPLACE INTO freq_dist_trayectoria 
+            (ultimo_concurso_usado, freq_pares_media, freq_pares_min, freq_pares_max, 
+             freq_tercias_media, freq_tercias_min, freq_tercias_max, 
+             freq_cuartetos_media, freq_cuartetos_min, freq_cuartetos_max, fecha_calculo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        """
+        params = (
+            int(concurso_num),
+            stats['pares']['media'], stats['pares']['min'], stats['pares']['max'],
+            stats['tercias']['media'], stats['tercias']['min'], stats['tercias']['max'],
+            stats['cuartetos']['media'], stats['cuartetos']['min'], stats['cuartetos']['max']
+        )
+        cursor.execute(query, params)
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error guardando punto de trayectoria de dist. de freqs para {concurso_num}: {e}")
+    finally:
+        if conn: conn.close()
+
 def process_trajectory_block(args):
-    """
-    Función trabajadora que procesa un único bloque de la trayectoria.
-    """
+    """Función trabajadora que procesa un único bloque de la trayectoria."""
     end_index, df_full_historico = args
     iter_start_time = time.time()
-    
     df_subset = df_full_historico.head(end_index)
     ultimo_concurso = int(df_subset.iloc[-1]['concurso'])
     
     logging.info(f"--- [Worker] Iniciando bloque hasta concurso {ultimo_concurso} ({end_index} sorteos) ---")
     
-    # 1. Cálculo y guardado de métricas de FRECUENCIAS
+    # 1. CÁLCULO DE FRECUENCIAS
     freqs_subset = calculate_frequencies_for_subset(df_subset)
-    freq_metrics = {
+    
+    # 1A. Guardar métricas de CONTEO de frecuencias
+    freq_count_metrics = {
         'total_pares_unicos': len(freqs_subset['pares']), 'suma_freq_pares': sum(freqs_subset['pares'].values()),
         'total_tercias_unicas': len(freqs_subset['tercias']), 'suma_freq_tercias': sum(freqs_subset['tercias'].values()),
         'total_cuartetos_unicos': len(freqs_subset['cuartetos']), 'suma_freq_cuartetos': sum(freqs_subset['cuartetos'].values())
     }
-    save_frequency_trajectory_point(ultimo_concurso, freq_metrics)
+    save_frequency_trajectory_point(ultimo_concurso, freq_count_metrics)
+
+    # 1B. Guardar métricas de DISTRIBUCIÓN de valores de frecuencias
+    freq_dist_stats = {}
+    for level in ['pares', 'tercias', 'cuartetos']:
+        values = list(freqs_subset[level].values())
+        if not values:
+            values = [0]
+        freq_dist_stats[level] = {
+            'media': float(np.mean(values)),
+            'min': int(np.min(values)),
+            'max': int(np.max(values))
+        }
+    save_freq_dist_trajectory_point(ultimo_concurso, freq_dist_stats)
     
-    # 2. Cálculo y guardado de estadísticas de AFINIDADES
+    # 2. CÁLCULO DE AFINIDADES
     afin_p, afin_t, afin_q = [], [], []
     result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
     for _, row in df_subset.iterrows():
@@ -148,26 +177,15 @@ def process_trajectory_block(args):
         afin_t.append(_calculate_subsequence_affinity(combo, freqs_subset, 3))
         afin_q.append(_calculate_subsequence_affinity(combo, freqs_subset, 4))
     
-    # --- MODIFICACIÓN CLAVE: Convertir explícitamente los tipos de numpy a Python nativo ---
     affinity_stats = {
-        'pares': {
-            'media': float(np.mean(afin_p)), 'mediana': float(np.median(afin_p)), 
-            'min': int(np.min(afin_p)), 'max': int(np.max(afin_p))
-        },
-        'tercias': {
-            'media': float(np.mean(afin_t)), 'mediana': float(np.median(afin_t)), 
-            'min': int(np.min(afin_t)), 'max': int(np.max(afin_t))
-        },
-        'cuartetos': {
-            'media': float(np.mean(afin_q)), 'mediana': float(np.median(afin_q)), 
-            'min': int(np.min(afin_q)), 'max': int(np.max(afin_q))
-        }
+        'pares': {'media': float(np.mean(afin_p)), 'mediana': float(np.median(afin_p)), 'min': int(np.min(afin_p)), 'max': int(np.max(afin_p))},
+        'tercias': {'media': float(np.mean(afin_t)), 'mediana': float(np.median(afin_t)), 'min': int(np.min(afin_t)), 'max': int(np.max(afin_t))},
+        'cuartetos': {'media': float(np.mean(afin_q)), 'mediana': float(np.median(afin_q)), 'min': int(np.min(afin_q)), 'max': int(np.max(afin_q))}
     }
     save_affinity_trajectory_point(ultimo_concurso, affinity_stats)
     
-    # 3. Cálculo y guardado de UMBRALES
+    # 3. CÁLCULO DE UMBRALES
     success, _, report = ml_optimizer.run_optimization(df_subset, freqs_subset)
-    
     if success and isinstance(report, dict) and 'new_thresholds' in report:
         save_trajectory_point(ultimo_concurso, report)
     else:

@@ -81,6 +81,23 @@ def save_historico_to_db(df, mode='replace'):
             );
         """)
         logger.info("Asegurada la existencia de la tabla 'afinidades_trayectoria'.")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS freq_dist_trayectoria (
+                ultimo_concurso_usado INTEGER PRIMARY KEY,
+                freq_pares_media REAL NOT NULL,
+                freq_pares_min INTEGER NOT NULL,
+                freq_pares_max INTEGER NOT NULL,
+                freq_tercias_media REAL NOT NULL,
+                freq_tercias_min INTEGER NOT NULL,
+                freq_tercias_max INTEGER NOT NULL,
+                freq_cuartetos_media REAL NOT NULL,
+                freq_cuartetos_min INTEGER NOT NULL,
+                freq_cuartetos_max INTEGER NOT NULL,
+                fecha_calculo DATETIME
+            );
+        """)
+        logger.info("Asegurada la existencia de la tabla 'freq_dist_trayectoria'.")
         
         df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
         conn.commit()
@@ -288,8 +305,8 @@ def read_freq_trajectory_data():
         logger.info(f"DB READ: 'read_freq_trajectory_data' success. Found {len(df)} rows.")
         if not df.empty:
             for col in df.columns:
-                if df[col].dtype == 'object':
-                    df[col] = pd.to_numeric(df[col], errors='ignore')
+                if col != 'fecha_calculo':
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_freq_trajectory_data': {e}", exc_info=True)
@@ -304,9 +321,26 @@ def read_affinity_trajectory_data():
         logger.info(f"DB READ: 'read_affinity_trajectory_data' success. Found {len(df)} rows.")
         if not df.empty:
             for col in df.columns:
-                if df[col].dtype == 'object':
-                    df[col] = pd.to_numeric(df[col], errors='ignore')
+                if col != 'fecha_calculo':
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_affinity_trajectory_data': {e}", exc_info=True)
+        return pd.DataFrame()
+
+def read_freq_dist_trajectory_data():
+    """Lee la tabla 'freq_dist_trayectoria' y la devuelve como un DataFrame."""
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        query = "SELECT * FROM freq_dist_trayectoria ORDER BY ultimo_concurso_usado ASC"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        logger.info(f"DB READ: 'read_freq_dist_trajectory_data' success. Found {len(df)} rows.")
+        if not df.empty:
+            for col in df.columns:
+                if col != 'fecha_calculo':
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
+    except (pd.errors.DatabaseError, Exception) as e:
+        logger.error(f"Error en 'read_freq_dist_trajectory_data': {e}", exc_info=True)
         return pd.DataFrame()
