@@ -595,6 +595,8 @@ if __name__ == "__main__":
                 return [], []
             df["es_omega_str"] = df["es_omega"].apply(lambda x: "Sí" if x == 1 else "No")
             df["fecha"] = pd.to_datetime(df["fecha"]).dt.strftime("%d/%m/%Y")
+            df["analizar"] = "[🔍](#)"
+
 
             styles = [
                 {"if": {"filter_query": "{bolsa_ganada} = 1"},"backgroundColor": "#155724","color": "white","fontWeight": "bold",},
@@ -607,6 +609,55 @@ if __name__ == "__main__":
 
             return df.to_dict("records"), styles
         return no_update, no_update
+
+    @app.callback(
+        Output('modal-deconstructor', 'is_open'),
+        Output('modal-deconstructor-header', 'children'),
+        Output('summary-cuartetos', 'children'),
+        Output('summary-tercias', 'children'),
+        Output('summary-pares', 'children'),
+        Output('table-cuartetos', 'data'),
+        Output('table-tercias', 'data'),
+        Output('table-pares', 'data'),
+        Input('table-historicos', 'active_cell'),
+        State('table-historicos', 'data'),
+        prevent_initial_call=True
+    )
+    def open_and_populate_deconstructor_modal(active_cell, table_data):
+        if not active_cell or active_cell['column_id'] != 'analizar' or not table_data:
+            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+
+        from modules.omega_logic import deconstruct_affinity
+
+        row_data = table_data[active_cell['row']]
+        combination = [row_data[f'r{i}'] for i in range(1, 7)]
+
+        data = deconstruct_affinity(combination)
+
+        if data.get("error"):
+            # Optionally, display an alert to the user
+            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+
+        header = f"Combinación: {data['combination']} | Omega Score: {data['omega_score']:.4f}"
+        summary_q = f"Afinidad Total de Cuartetos: {data['totals']['cuartetos']}"
+        summary_t = f"Afinidad Total de Tercias: {data['totals']['tercias']}"
+        summary_p = f"Afinidad Total de Pares: {data['totals']['pares']}"
+
+        table_q_data = data['breakdown']['cuartetos']
+        table_t_data = data['breakdown']['tercias']
+        table_p_data = data['breakdown']['pares']
+
+        return True, header, summary_q, summary_t, summary_p, table_q_data, table_t_data, table_p_data
+
+    @app.callback(
+        Output('modal-deconstructor', 'is_open', allow_duplicate=True),
+        Input('btn-close-modal', 'n_clicks'),
+        prevent_initial_call=True
+    )
+    def close_deconstructor_modal(n_clicks):
+        if n_clicks > 0:
+            return False
+        return no_update
 
     @app.callback(
         Output("graph-universo", "figure"),
