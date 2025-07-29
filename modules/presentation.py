@@ -123,7 +123,72 @@ def create_registros_view():
     ])
 
 def create_historicos_view():
+    modal_deconstructor = dbc.Modal(
+        [
+            dbc.ModalHeader(dbc.ModalTitle("Deconstructor de Afinidad", id="modal-deconstructor-title")),
+            dbc.ModalBody([
+                html.H5("Combinación Analizada: [ ] | Omega Score: 0.0", id="modal-deconstructor-header"),
+                html.Hr(),
+                dbc.Row([
+                    dbc.Col(html.P(id="summary-cuartetos"), width=4),
+                    dbc.Col(html.P(id="summary-tercias"), width=4),
+                    dbc.Col(html.P(id="summary-pares"), width=4),
+                ], className="text-center mb-3"),
+                dbc.Tabs(
+                    [
+                        dbc.Tab(
+                            dash_table.DataTable(
+                                id='table-cuartetos',
+                                columns=[
+                                    {'name': 'Subsecuencia', 'id': 'subsequence'},
+                                    {'name': 'Frecuencia (Aporte)', 'id': 'frequency'},
+                                ],
+                                style_cell={'textAlign': 'center'},
+                                style_header={'fontWeight': 'bold'},
+                                page_size=15,
+                            ),
+                            label="Cuartetos (15)",
+                        ),
+                        dbc.Tab(
+                            dash_table.DataTable(
+                                id='table-tercias',
+                                columns=[
+                                    {'name': 'Subsecuencia', 'id': 'subsequence'},
+                                    {'name': 'Frecuencia (Aporte)', 'id': 'frequency'},
+                                ],
+                                style_cell={'textAlign': 'center'},
+                                style_header={'fontWeight': 'bold'},
+                                page_size=20,
+                            ),
+                            label="Tercias (20)",
+                        ),
+                        dbc.Tab(
+                            dash_table.DataTable(
+                                id='table-pares',
+                                columns=[
+                                    {'name': 'Subsecuencia', 'id': 'subsequence'},
+                                    {'name': 'Frecuencia (Aporte)', 'id': 'frequency'},
+                                ],
+                                style_cell={'textAlign': 'center'},
+                                style_header={'fontWeight': 'bold'},
+                                page_size=15,
+                            ),
+                            label="Pares (15)",
+                        ),
+                    ]
+                ),
+            ]),
+            dbc.ModalFooter(
+                dbc.Button("Cerrar", id="btn-close-modal", className="ms-auto", n_clicks=0)
+            ),
+        ],
+        id="modal-deconstructor",
+        size="lg",
+        is_open=False,
+    )
+
     return html.Div([
+        modal_deconstructor,
         html.H3("Melate Retro - Registros Históricos", className="text-center text-dark mb-4"),
         dbc.Row(dbc.Col(dbc.Button("Refrescar Datos", id="btn-refresh-historicos", className="mb-3", color="primary", outline=True)), justify="end"),
         dash_table.DataTable(id='table-historicos',
@@ -136,6 +201,7 @@ def create_historicos_view():
                 {'name': 'Omega Score', 'id': 'omega_score', 'type': 'numeric', 'format': {'specifier': '.4f'}},
                 {'name': 'Af. Cuartetos', 'id': 'afinidad_cuartetos'},
                 {'name': 'Af. Tercias', 'id': 'afinidad_tercias'}, {'name': 'Af. Pares', 'id': 'afinidad_pares'},
+                {'name': 'Analizar', 'id': 'analizar', 'presentation': 'markdown'},
             ],
             data=[], page_size=20, sort_action='native', filter_action='native',
             style_cell={'textAlign': 'center', 'minWidth': '80px'},
