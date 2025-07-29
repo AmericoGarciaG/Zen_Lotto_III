@@ -116,16 +116,20 @@ if __name__ == "__main__":
             *([Input("btn-nav-monitoreo", "n_clicks")] if config.DEBUG_MODE else []),
             Input("btn-nav-registros", "n_clicks"),
             Input("btn-nav-configuracion", "n_clicks"),
-        ]
+        ],
     )
     def render_view_content(*args):
         from modules.presentation import (
-            create_generador_view, create_configuracion_view,
-            create_registros_view, create_historicos_view,
-            create_graficos_view, create_monitoring_view
+            create_generador_view,
+            create_configuracion_view,
+            create_registros_view,
+            create_historicos_view,
+            create_graficos_view,
+            create_monitoring_view,
         )
+
         triggered_id = ctx.triggered_id or "btn-nav-generador"
-        
+
         if triggered_id == "btn-nav-configuracion":
             return create_configuracion_view()
         elif triggered_id == "btn-nav-registros":
@@ -136,7 +140,7 @@ if __name__ == "__main__":
             return create_historicos_view()
         elif triggered_id == "btn-nav-graficos":
             return create_graficos_view()
-        
+
         return create_generador_view()
 
     @app.callback(
@@ -155,24 +159,24 @@ if __name__ == "__main__":
             *([Input("btn-nav-monitoreo", "n_clicks")] if config.DEBUG_MODE else []),
             Input("btn-nav-registros", "n_clicks"),
             Input("btn-nav-configuracion", "n_clicks"),
-        ]
+        ],
     )
     def update_nav_buttons_style(*args):
         triggered_id = ctx.triggered_id or "btn-nav-generador"
         base_class = "nav-button"
-        
+
         views = ["generador", "graficos", "historicos", "registros", "configuracion"]
         if config.DEBUG_MODE:
             views.insert(3, "monitoreo")
-            
+
         styles = {view: base_class for view in views}
-        
+
         active_view = triggered_id.replace("btn-nav-", "")
         if active_view in styles:
             styles[active_view] += " active"
         else:
             styles["generador"] += " active"
-            
+
         return list(styles.values())
 
     # --- Callbacks de Configuración ---
@@ -247,13 +251,28 @@ if __name__ == "__main__":
                 duration=5000,
             )
 
-        set_progress((0,"Iniciando optimización...",{"display": "block"},True,True,True,True,))
+        set_progress(
+            (
+                0,
+                "Iniciando optimización...",
+                {"display": "block"},
+                True,
+                True,
+                True,
+                True,
+            )
+        )
 
         df_historico = database.read_historico_from_db()
         freqs = omega_logic.get_frequencies()
         if df_historico.empty or freqs is None:
-            set_progress((100, "Error.", {"display": "none"}, False, False, False, False))
-            return dbc.Alert("Se necesita el histórico y las frecuencias para optimizar.",color="warning",)
+            set_progress(
+                (100, "Error.", {"display": "none"}, False, False, False, False)
+            )
+            return dbc.Alert(
+                "Se necesita el histórico y las frecuencias para optimizar.",
+                color="warning",
+            )
 
         start = time.time()
         success, message, report = ml_optimizer.run_optimization(
@@ -275,12 +294,16 @@ if __name__ == "__main__":
                 f"{message} {details}{instruction} (Tiempo: {total_time:.2f}s)"
             )
 
-            state["last_concurso_for_optimization"] = state.get("last_concurso_for_freqs", 0)
+            state["last_concurso_for_optimization"] = state.get(
+                "last_concurso_for_freqs", 0
+            )
             state_manager.save_state(state)
         else:
             full_message = f"{message} (Tiempo: {total_time:.2f}s)"
 
-        set_progress((100, "Completado.", {"display": "none"}, False, False, False, False))
+        set_progress(
+            (100, "Completado.", {"display": "none"}, False, False, False, False)
+        )
         return dbc.Alert(
             full_message, color="success" if success else "danger", duration=25000
         )
@@ -311,26 +334,38 @@ if __name__ == "__main__":
         last_omega_class = state.get("last_concurso_for_omega_class", -1)
 
         if last_opt > 0 and last_opt == last_omega_class:
-            return dbc.Alert("Los datos ya están enriquecidos y la Clase Omega pre-generada con los últimos umbrales.",color="info",duration=5000,)
+            return dbc.Alert(
+                "Los datos ya están enriquecidos y la Clase Omega pre-generada con los últimos umbrales.",
+                color="info",
+                duration=5000,
+            )
 
         importlib.reload(config)
         set_progress((0, "Iniciando...", {"display": "block"}, True, True, True, True))
 
         success_enrich, msg_enrich = enrich_historical_data(set_progress)
         if not success_enrich:
-            set_progress((100, "Error.", {"display": "none"}, False, False, False, False))
+            set_progress(
+                (100, "Error.", {"display": "none"}, False, False, False, False)
+            )
             return dbc.Alert(f"Falló el enriquecimiento: {msg_enrich}", color="danger")
 
         success_pregen, msg_pregen = pregenerate_omega_class(set_progress)
         if not success_pregen:
-            set_progress((100, "Error.", {"display": "none"}, False, False, False, False))
+            set_progress(
+                (100, "Error.", {"display": "none"}, False, False, False, False)
+            )
             return dbc.Alert(f"Falló la pre-generación: {msg_pregen}", color="danger")
 
         full_message = f"Proceso completado. {msg_enrich} {msg_pregen}"
-        state["last_concurso_for_omega_class"] = state.get("last_concurso_for_optimization", 0)
+        state["last_concurso_for_omega_class"] = state.get(
+            "last_concurso_for_optimization", 0
+        )
         state_manager.save_state(state)
 
-        set_progress((100, "Completado.", {"display": "none"}, False, False, False, False))
+        set_progress(
+            (100, "Completado.", {"display": "none"}, False, False, False, False)
+        )
         return dbc.Alert(full_message, color="success", duration=15000)
 
     # --- Callbacks del Generador ---
@@ -357,7 +392,10 @@ if __name__ == "__main__":
             combo = get_random_omega_combination()
             if combo:
                 return combo + [None, combo]
-            return [no_update] * 6 + [dbc.Alert("Error al generar.", color="warning"),None,]
+            return [no_update] * 6 + [
+                dbc.Alert("Error al generar.", color="warning"),
+                None,
+            ]
         else:
             try:
                 user_combo = sorted([int(num) for num in num_inputs])
@@ -370,11 +408,23 @@ if __name__ == "__main__":
                 return [no_update] * 7 + [None]
             eval_result = evaluate_combination(user_combo, freqs)
             if eval_result.get("esOmega"):
-                return [no_update] * 6 + [dbc.Alert("¡Tu combinación ya es Omega!", color="success"),user_combo,]
+                return [no_update] * 6 + [
+                    dbc.Alert("¡Tu combinación ya es Omega!", color="success"),
+                    user_combo,
+                ]
             adjusted, matches = adjust_to_omega(user_combo)
             if adjusted:
-                return adjusted + [dbc.Alert(f"¡Ajuste exitoso! Se mantuvieron {matches} números.",color="info",),adjusted,]
-            return [no_update] * 6 + [dbc.Alert("No se encontró un ajuste cercano.", color="danger"),None,]
+                return adjusted + [
+                    dbc.Alert(
+                        f"¡Ajuste exitoso! Se mantuvieron {matches} números.",
+                        color="info",
+                    ),
+                    adjusted,
+                ]
+            return [no_update] * 6 + [
+                dbc.Alert("No se encontró un ajuste cercano.", color="danger"),
+                None,
+            ]
 
     @app.callback(
         Output("analysis-result-card", "style"),
@@ -407,33 +457,71 @@ if __name__ == "__main__":
             return default_return[:-1] + [dbc.Alert(str(e), color="warning")]
         freqs = get_frequencies()
         if freqs is None:
-            return default_return[:-1] + [dbc.Alert("Frecuencias no generadas.", color="danger")]
+            return default_return[:-1] + [
+                dbc.Alert("Frecuencias no generadas.", color="danger")
+            ]
         result = evaluate_combination(combination, freqs)
         if not isinstance(result, dict) or result.get("error"):
-            error_msg = (result.get("error", "Error.") if isinstance(result, dict) else "Error.")
+            error_msg = (
+                result.get("error", "Error.") if isinstance(result, dict) else "Error."
+            )
             return default_return[:-1] + [dbc.Alert(error_msg, color="danger")]
         es_omega = result.get("esOmega", False)
         title = "¡CLASE OMEGA! ✅" if es_omega else "COMBINACIÓN NO-OMEGA ❌"
         card_class_base = "mt-4 text-dark p-3"
-        card_class_color = ("border-success bg-success-subtle" if es_omega else "border-danger bg-danger-subtle")
+        card_class_color = (
+            "border-success bg-success-subtle"
+            if es_omega
+            else "border-danger bg-danger-subtle"
+        )
         combo_text = f"Tu combinación: {result.get('combinacion', [])}"
         omega_score = result.get("omegaScore")
-        score_text = (f"Omega Score: {omega_score:.4f}" if isinstance(omega_score, (int, float)) else "Omega Score: N/A")
+        score_text = (
+            f"Omega Score: {omega_score:.4f}"
+            if isinstance(omega_score, (int, float))
+            else "Omega Score: N/A"
+        )
         criterios = result.get("criterios", {})
         if not isinstance(criterios, dict):
-            return default_return[:-1] + [dbc.Alert("Faltan datos de criterios.", color="danger")]
-        pares, tercias, cuartetos = (criterios.get("pares", {}),criterios.get("tercias", {}),criterios.get("cuartetos", {}),)
+            return default_return[:-1] + [
+                dbc.Alert("Faltan datos de criterios.", color="danger")
+            ]
+        pares, tercias, cuartetos = (
+            criterios.get("pares", {}),
+            criterios.get("tercias", {}),
+            criterios.get("cuartetos", {}),
+        )
         details_list = [
-            html.Li(f"Pares: {pares.get('score')} / {pares.get('umbral')} {'✅' if pares.get('cumple') else '❌'}"),
-            html.Li(f"Tercias: {tercias.get('score')} / {tercias.get('umbral')} {'✅' if tercias.get('cumple') else '❌'}"),
-            html.Li(f"Cuartetos: {cuartetos.get('score')} / {cuartetos.get('umbral')} {'✅' if cuartetos.get('cumple') else '❌'}"),
+            html.Li(
+                f"Pares: {pares.get('score')} / {pares.get('umbral')} {'✅' if pares.get('cumple') else '❌'}"
+            ),
+            html.Li(
+                f"Tercias: {tercias.get('score')} / {tercias.get('umbral')} {'✅' if tercias.get('cumple') else '❌'}"
+            ),
+            html.Li(
+                f"Cuartetos: {cuartetos.get('score')} / {cuartetos.get('umbral')} {'✅' if cuartetos.get('cumple') else '❌'}"
+            ),
         ]
 
         ha_salido = result.get("haSalido", False)
         if ha_salido:
-            details_list.extend([html.Li(html.Hr(), style={"listStyleType": "none"}),html.Li("Ya ha salido en el histórico ❌"),])
+            details_list.extend(
+                [
+                    html.Li(html.Hr(), style={"listStyleType": "none"}),
+                    html.Li("Ya ha salido en el histórico ❌"),
+                ]
+            )
 
-        return ({"display": "block"},f"{card_class_base} {card_class_color}",title,combo_text,score_text,details_list,(combination if es_omega else None),None,)
+        return (
+            {"display": "block"},
+            f"{card_class_base} {card_class_color}",
+            title,
+            combo_text,
+            score_text,
+            details_list,
+            (combination if es_omega else None),
+            None,
+        )
 
     @app.callback(
         [Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)]
@@ -456,10 +544,16 @@ if __name__ == "__main__":
     )
     def control_registration_fields(validated_omega, *current_inputs_tuple):
         try:
-            current_inputs = sorted([int(i) for i in current_inputs_tuple if i is not None and i != ""])
+            current_inputs = sorted(
+                [int(i) for i in current_inputs_tuple if i is not None and i != ""]
+            )
         except (ValueError, TypeError):
             current_inputs = []
-        if (validated_omega and len(current_inputs) == 6 and sorted(validated_omega) == current_inputs):
+        if (
+            validated_omega
+            and len(current_inputs) == 6
+            and sorted(validated_omega) == current_inputs
+        ):
             return False, False, False
         return True, True, True
 
@@ -467,7 +561,11 @@ if __name__ == "__main__":
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-registrar", "n_clicks"),
-        [State("store-validated-omega", "data"),State("input-nombre", "value"),State("input-movil", "value"),],
+        [
+            State("store-validated-omega", "data"),
+            State("input-nombre", "value"),
+            State("input-movil", "value"),
+        ],
         prevent_initial_call=True,
     )
     def handle_register_omega(n_clicks, validated_omega, nombre, movil):
@@ -480,7 +578,9 @@ if __name__ == "__main__":
         success, message = register_omega_combination(
             validated_omega, nombre.strip(), movil.strip()
         )
-        return dbc.Alert(message, color="success" if success else "danger", duration=5000)
+        return dbc.Alert(
+            message, color="success" if success else "danger", duration=5000
+        )
 
     @app.callback(
         Output("table-registros", "data"),
@@ -489,7 +589,9 @@ if __name__ == "__main__":
         State("modal-confirm-delete", "is_open"),
     )
     def populate_registros_table(refresh_clicks, nav_clicks, is_modal_open):
-        if ctx.triggered_id in ["btn-refresh-registros", "btn-nav-registros"] or (ctx.triggered_id == "modal-confirm-delete" and not is_modal_open):
+        if ctx.triggered_id in ["btn-refresh-registros", "btn-nav-registros"] or (
+            ctx.triggered_id == "modal-confirm-delete" and not is_modal_open
+        ):
             from modules.database import get_all_registrations
 
             df = get_all_registrations()
@@ -523,9 +625,13 @@ if __name__ == "__main__":
         from modules.database import delete_registration
 
         if not combo_to_delete:
-            return False, dbc.Alert("Error: No hay registro seleccionado.", color="danger")
+            return False, dbc.Alert(
+                "Error: No hay registro seleccionado.", color="danger"
+            )
         success, message = delete_registration(combo_to_delete)
-        return False, dbc.Alert(message, color="success" if success else "danger", duration=4000)
+        return False, dbc.Alert(
+            message, color="success" if success else "danger", duration=4000
+        )
 
     @app.callback(
         Output("modal-confirm-delete", "is_open", allow_duplicate=True),
@@ -593,16 +699,36 @@ if __name__ == "__main__":
             df = read_historico_from_db()
             if df.empty:
                 return [], []
-            df["es_omega_str"] = df["es_omega"].apply(lambda x: "Sí" if x == 1 else "No")
+            df["es_omega_str"] = df["es_omega"].apply(
+                lambda x: "Sí" if x == 1 else "No"
+            )
             df["fecha"] = pd.to_datetime(df["fecha"]).dt.strftime("%d/%m/%Y")
             df["analizar"] = "[🔍]"
-            df['id'] = df['concurso']
-
+            df["id"] = df["concurso"]
 
             styles = [
-                {"if": {"filter_query": "{bolsa_ganada} = 1"},"backgroundColor": "#155724","color": "white","fontWeight": "bold",},
-                {"if": {"column_id": "es_omega_str","filter_query": '{es_omega_str} = "Sí"',},"backgroundColor": "#d4edda","color": "#155724",},
-                {"if": {"column_id": "es_omega_str","filter_query": '{es_omega_str} = "No"',},"backgroundColor": "#f8d7da","color": "#721c24",},
+                {
+                    "if": {"filter_query": "{bolsa_ganada} = 1"},
+                    "backgroundColor": "#155724",
+                    "color": "white",
+                    "fontWeight": "bold",
+                },
+                {
+                    "if": {
+                        "column_id": "es_omega_str",
+                        "filter_query": '{es_omega_str} = "Sí"',
+                    },
+                    "backgroundColor": "#d4edda",
+                    "color": "#155724",
+                },
+                {
+                    "if": {
+                        "column_id": "es_omega_str",
+                        "filter_query": '{es_omega_str} = "No"',
+                    },
+                    "backgroundColor": "#f8d7da",
+                    "color": "#721c24",
+                },
             ]
 
             if "es_ganador" in df.columns:
@@ -612,56 +738,101 @@ if __name__ == "__main__":
         return no_update, no_update
 
     @app.callback(
-        Output('modal-deconstructor', 'is_open'),
-        Output('modal-deconstructor-header', 'children'),
-        Output('summary-cuartetos', 'children'),
-        Output('summary-tercias', 'children'),
-        Output('summary-pares', 'children'),
-        Output('table-cuartetos', 'data'),
-        Output('table-tercias', 'data'),
-        Output('table-pares', 'data'),
-        Input('table-historicos', 'active_cell'),
-        State('table-historicos', 'data'),
-        prevent_initial_call=True
+        Output("modal-deconstructor", "is_open"),
+        Output("modal-deconstructor-header", "children"),
+        Output("summary-cuartetos", "children"),
+        Output("summary-tercias", "children"),
+        Output("summary-pares", "children"),
+        Output("table-cuartetos", "data"),
+        Output("table-tercias", "data"),
+        Output("table-pares", "data"),
+        Input("table-historicos", "active_cell"),
+        State("table-historicos", "data"),
+        prevent_initial_call=True,
     )
     def open_and_populate_deconstructor_modal(active_cell, table_data):
-        if not active_cell or active_cell['column_id'] != 'analizar' or not table_data:
-            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+        if not active_cell or active_cell["column_id"] != "analizar" or not table_data:
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+            )
 
         from modules.omega_logic import deconstruct_affinity
 
-        row_id = active_cell.get('row_id')
+        row_id = active_cell.get("row_id")
         if not row_id:
-            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
-        
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+            )
+
         row_data = next((item for item in table_data if item["id"] == row_id), None)
         if not row_data:
-            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+            )
 
-        combination = [row_data[f'r{i}'] for i in range(1, 7)]
-        omega_score = row_data.get('omega_score', 0.0)
+        combination = [row_data[f"r{i}"] for i in range(1, 7)]
+        omega_score = row_data.get("omega_score", 0.0)
 
         data = deconstruct_affinity(combination, omega_score)
 
         if data.get("error"):
             # Optionally, display an alert to the user
-            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+            return (
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+                no_update,
+            )
 
         header = f"Combinación: {data['combination']} | Omega Score: {data['omega_score']:.4f}"
         summary_q = f"Afinidad Total de Cuartetos: {data['totals']['cuartetos']}"
         summary_t = f"Afinidad Total de Tercias: {data['totals']['tercias']}"
         summary_p = f"Afinidad Total de Pares: {data['totals']['pares']}"
 
-        table_q_data = data['breakdown']['cuartetos']
-        table_t_data = data['breakdown']['tercias']
-        table_p_data = data['breakdown']['pares']
+        table_q_data = data["breakdown"]["cuartetos"]
+        table_t_data = data["breakdown"]["tercias"]
+        table_p_data = data["breakdown"]["pares"]
 
-        return True, header, summary_q, summary_t, summary_p, table_q_data, table_t_data, table_p_data
+        return (
+            True,
+            header,
+            summary_q,
+            summary_t,
+            summary_p,
+            table_q_data,
+            table_t_data,
+            table_p_data,
+        )
 
     @app.callback(
-        Output('modal-deconstructor', 'is_open', allow_duplicate=True),
-        Input('btn-close-modal', 'n_clicks'),
-        prevent_initial_call=True
+        Output("modal-deconstructor", "is_open", allow_duplicate=True),
+        Input("btn-close-modal", "n_clicks"),
+        prevent_initial_call=True,
     )
     def close_deconstructor_modal(n_clicks):
         if n_clicks > 0:
@@ -669,39 +840,55 @@ if __name__ == "__main__":
         return no_update
 
     @app.callback(
-        Output("graph-universo", "figure"),
-        Output("graph-historico", "figure"),
-        Output("graph-ganadores", "figure"),
-        Output("graph-scatter-score-bolsa", "figure"),
-        Output("notification-container", "children", allow_duplicate=True),
-        Input("btn-refresh-graficos", "n_clicks"),
-        prevent_initial_call=True,
+        [
+            Output('graph-universo', 'figure'), 
+            Output('graph-historico', 'figure'), 
+            Output('graph-ganadores', 'figure'), 
+            Output('graph-scatter-score-bolsa', 'figure'),
+            Output('graph-score-historico-dist', 'figure'), # <-- Nuevo Output
+            Output('graph-score-omega-class-dist', 'figure'), # <-- Nuevo Output
+            Output('notification-container', 'children', allow_duplicate=True), 
+        ],
+        Input('btn-refresh-graficos', 'n_clicks'), 
+        prevent_initial_call=True
     )
     def update_all_graphs(n_clicks):
-        if not fue_un_clic_real("btn-refresh-graficos"):
-            return no_update, no_update, no_update, no_update, no_update
-        from modules.database import read_historico_from_db, count_omega_class
-        from modules.omega_logic import C
+        # --- CORRECCIÓN 1: Devolver siempre el número correcto de outputs ---
+        if not fue_un_clic_real('btn-refresh-graficos'):
+            return no_update, no_update, no_update, no_update, no_update, no_update, no_update
 
-        empty_fig = go.Figure().update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        from modules.database import read_historico_from_db, count_omega_class, get_omega_class_scores
+        from modules.omega_logic import C
+        import plotly.express as px
+        import plotly.graph_objects as go
+        
+        empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+
+        # Gráficos de Donut
         total_omega_class = count_omega_class()
         if not isinstance(total_omega_class, (int, float, np.integer)):
-            return (empty_fig,empty_fig,empty_fig,empty_fig,dbc.Alert("Error de tipo.", color="danger"),)
+            return empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Error de tipo.", color="danger")
         total_omega_class_int = int(total_omega_class)
         if total_omega_class_int == 0:
-            return (empty_fig,empty_fig,empty_fig,empty_fig,dbc.Alert("Clase Omega no generada.", color="warning"),)
+            return empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Clase Omega no generada.", color="warning")
+        
         fig_universo = create_donut_chart([total_omega_class_int, C(39, 6) - total_omega_class_int],["Clase Omega", "Otras"],"Universo",)
+        
         df_historico = read_historico_from_db()
         if df_historico.empty:
-            return (no_update,empty_fig,empty_fig,empty_fig,dbc.Alert("Histórico vacío.", color="warning"),)
+            return fig_universo, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Histórico vacío.", color="warning")
+        
+        # --- CORRECCIÓN 2: Crear la columna 'es_omega_str' aquí también ---
+        df_historico["es_omega_str"] = df_historico["es_omega"].apply(lambda x: "Sí" if x == 1 else "No")
 
         historico_counts = df_historico["es_omega"].value_counts()
         fig_historico = create_donut_chart([historico_counts.get(1, 0), historico_counts.get(0, 0)],["Omega", "No Omega"],"Sorteos Históricos",)
-
+        
         df_ganadores = df_historico[df_historico["es_ganador"] == 1].copy()
         ganadores_counts = df_ganadores["es_omega"].value_counts()
         fig_ganadores = create_donut_chart([ganadores_counts.get(1, 0), ganadores_counts.get(0, 0)],["Omega", "No Omega"],"Sorteos con Premio",)
 
+        # Gráfico de Dispersión
         df_scatter = df_ganadores
         if df_scatter.empty:
             fig_scatter = empty_fig.update_layout(title_text="No hay sorteos con premio mayor")
@@ -710,24 +897,43 @@ if __name__ == "__main__":
             df_scatter["combinacion_str"] = (df_scatter[["r1", "r2", "r3", "r4", "r5", "r6"]].astype(str).agg("-".join, axis=1))
 
             fig_scatter = px.scatter(
-                df_scatter,
-                x="omega_score",
-                y="bolsa_ganada",
-                color="Clase",
-                color_discrete_map={"Omega": "#3b71ca", "No Omega": "#dc3545"},
-                template="simple_white",
+                df_scatter, x="omega_score", y="bolsa_ganada", color="Clase",
+                color_discrete_map={"Omega": "#3b71ca", "No Omega": "#dc3545"}, template="simple_white",
                 title="Comparativa de Sorteos con Premio Mayor",
-                labels={"omega_score": "Omega Score","bolsa_ganada": "Bolsa Ganada (MXN)",},
+                labels={"omega_score": "Omega Score","bolsa_ganada": "Bolsa Ganada (MXN)"},
                 hover_data=["concurso", "fecha", "combinacion_str"],
             )
-            fig_scatter.update_layout(
-                title_x=0.5,
-                legend_title_text="",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            )
+            fig_scatter.update_layout(title_x=0.5, legend_title_text="", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             fig_scatter.update_traces(marker=dict(size=10, opacity=0.7, line=dict(width=1, color="DarkSlateGrey")))
 
-        return fig_universo, fig_historico, fig_ganadores, fig_scatter, None
+        # Histograma de Omega Score en TODO el histórico
+        fig_score_historico = px.histogram(
+            df_historico, x="omega_score", color="es_omega_str",
+            color_discrete_map={'Sí': '#3b71ca', 'No': '#adb5bd'},
+            labels={"omega_score": "Omega Score", "es_omega_str": "Clase"},
+            template='simple_white'
+        )
+        fig_score_historico.update_layout(title_x=0.5, yaxis_title="Cantidad de Sorteos", legend_title_text='Pertenece a Clase Omega')
+
+        # Histograma de Omega Score en TODA la Clase Omega teórica
+        df_omega_class = get_omega_class_scores()
+        if df_omega_class.empty:
+            fig_score_omega_class = empty_fig.update_layout(title_text="Clase Omega no ha sido pre-generada")
+        else:
+            s_q = ((df_omega_class['afinidad_cuartetos'] - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5
+            s_t = ((df_omega_class['afinidad_tercias'] - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3
+            s_p = ((df_omega_class['afinidad_pares'] - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2
+            df_omega_class['omega_score'] = s_q + s_t + s_p
+            
+            fig_score_omega_class = px.histogram(
+                df_omega_class, x="omega_score",
+                labels={"omega_score": "Omega Score"},
+                template='simple_white',
+                color_discrete_sequence=['#3b71ca']
+            )
+            fig_score_omega_class.update_layout(title_x=0.5, yaxis_title="Cantidad de Combinaciones Teóricas")
+            
+        return fig_universo, fig_historico, fig_ganadores, fig_scatter, fig_score_historico, fig_score_omega_class, None
 
     @app.callback(
         Output("collapse-dist-panel", "is_open"),
@@ -739,102 +945,231 @@ if __name__ == "__main__":
         if n:
             return not is_open
         return is_open
-    
+
+    # --- Reemplaza el callback de monitoreo existente con esta versión completa ---
     @app.callback(
         [
-            Output('graph-freq-dist-trajectory', 'figure'),
-            Output('graph-affinity-trajectory', 'figure'),
-            Output('graph-freq-trajectory', 'figure'),
-            Output('graph-threshold-trajectory', 'figure'),
-            Output('graph-freq-histogram', 'figure'),
+            Output("graph-freq-dist-trajectory", "figure"),
+            Output("graph-affinity-trajectory", "figure"),
+            Output("graph-freq-trajectory", "figure"),
+            Output("graph-threshold-trajectory", "figure"),
+            Output("graph-freq-histogram", "figure"),
+            Output("graph-affinity-histogram", "figure"),
         ],
         [
-            Input('btn-refresh-monitoring', 'n_clicks'),
-            Input('btn-nav-monitoreo', 'n_clicks')
-        ]
+            Input("btn-refresh-monitoring", "n_clicks"),
+            Input("btn-nav-monitoreo", "n_clicks"),
+        ],
     )
     def update_monitoring_graphs(refresh_clicks, nav_clicks):
         if not ctx.triggered_id:
-            return no_update, no_update, no_update, no_update, no_update
+            return no_update, no_update, no_update, no_update, no_update, no_update
 
         from modules.database import (
-            read_freq_dist_trajectory_data, read_affinity_trajectory_data,
-            read_freq_trajectory_data, read_trajectory_data,
+            read_historico_from_db,
+            read_freq_dist_trajectory_data,
+            read_affinity_trajectory_data,
+            read_freq_trajectory_data,
+            read_trajectory_data,
         )
         from modules.omega_logic import C, get_frequencies
         from plotly.subplots import make_subplots
+        import pandas as pd
+        import plotly.express as px
+        import plotly.graph_objects as go
+        import config # Importar el config para acceder a los esquemas
 
         df_freq_dist = read_freq_dist_trajectory_data()
         df_affinity = read_affinity_trajectory_data()
         df_freq = read_freq_trajectory_data()
         df_threshold = read_trajectory_data()
-        
+
         empty_fig = go.Figure().update_layout(
-            title_text="No hay datos. Ejecute 'generate_trajectory.py'", 
-            title_x=0.5, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+            title_text="No hay datos. Ejecute 'generate_trajectory.py'",
+            title_x=0.5,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
         )
 
         # 1. Gráfico de DISTRIBUCIÓN DE FRECUENCIAS
         if df_freq_dist.empty:
             fig_freq_dist = empty_fig
         else:
-            fig_freq_dist = make_subplots(rows=3, cols=1, shared_xaxes=True, subplot_titles=('Frecuencia de Cuartetos', 'Frecuencia de Tercias', 'Frecuencia de Pares'))
-            levels = [('cuartetos', 1), ('tercias', 2), ('pares', 3)]
-            colors = {'media': '#d62728', 'rango': 'rgba(214,39,40,0.2)'}
+            fig_freq_dist = make_subplots(
+                rows=3,
+                cols=1,
+                shared_xaxes=True,
+                subplot_titles=(
+                    "Frecuencia de Cuartetos",
+                    "Frecuencia de Tercias",
+                    "Frecuencia de Pares",
+                ),
+            )
+            levels = [("cuartetos", 1), ("tercias", 2), ("pares", 3)]
+            colors = {"media": "#d62728", "rango": "rgba(214,39,40,0.2)"}
             shapes = []
 
             for level, row in levels:
-                df_freq_dist[f'freq_{level}_max'] = df_freq_dist[f'freq_{level}_max'].cummax()
-                
-                fig_freq_dist.add_trace(go.Scatter(x=df_freq_dist['ultimo_concurso_usado'], y=df_freq_dist[f'freq_{level}_max'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=row, col=1)
-                fig_freq_dist.add_trace(go.Scatter(x=df_freq_dist['ultimo_concurso_usado'], y=df_freq_dist[f'freq_{level}_min'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=colors['rango'], name='Rango (Min-Max)', hoverinfo='skip'), row=row, col=1)
-                fig_freq_dist.add_trace(go.Scatter(x=df_freq_dist['ultimo_concurso_usado'], y=df_freq_dist[f'freq_{level}_media'], mode='lines', line=dict(color=colors['media'], width=2), name='Media'), row=row, col=1)
+                df_freq_dist[f"freq_{level}_max"] = df_freq_dist[
+                    f"freq_{level}_max"
+                ].cummax()
 
-                max_val = df_freq_dist[f'freq_{level}_max'].max()
-                shapes.append(dict(type='line', xref='paper', yref=f'y{row}', x0=0, y0=max_val, x1=1, y1=max_val, line=dict(color='grey', width=1, dash='dot')))
+                fig_freq_dist.add_trace(
+                    go.Scatter(
+                        x=df_freq_dist["ultimo_concurso_usado"],
+                        y=df_freq_dist[f"freq_{level}_max"],
+                        mode="lines",
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    ),
+                    row=row,
+                    col=1,
+                )
+                fig_freq_dist.add_trace(
+                    go.Scatter(
+                        x=df_freq_dist["ultimo_concurso_usado"],
+                        y=df_freq_dist[f"freq_{level}_min"],
+                        mode="lines",
+                        line=dict(width=0),
+                        fill="tonexty",
+                        fillcolor=colors["rango"],
+                        name="Rango (Min-Max)",
+                        hoverinfo="skip",
+                    ),
+                    row=row,
+                    col=1,
+                )
+                fig_freq_dist.add_trace(
+                    go.Scatter(
+                        x=df_freq_dist["ultimo_concurso_usado"],
+                        y=df_freq_dist[f"freq_{level}_media"],
+                        mode="lines",
+                        line=dict(color=colors["media"], width=2),
+                        name="Media",
+                    ),
+                    row=row,
+                    col=1,
+                )
 
-            fig_freq_dist.update_layout(height=700, template='simple_white', showlegend=False, shapes=shapes)
+                max_val = df_freq_dist[f"freq_{level}_max"].max()
+                shapes.append(
+                    dict(
+                        type="line",
+                        xref="paper",
+                        yref=f"y{row}",
+                        x0=0,
+                        y0=max_val,
+                        x1=1,
+                        y1=max_val,
+                        line=dict(color="grey", width=1, dash="dot"),
+                    )
+                )
+
+            fig_freq_dist.update_layout(
+                height=700, template="simple_white", showlegend=False, shapes=shapes
+            )
 
         # 2. Gráfico de AFINIDADES
         if df_affinity.empty:
             fig_affinity = empty_fig
         else:
-            fig_affinity = make_subplots(rows=3, cols=1, shared_xaxes=True, subplot_titles=('Afinidad de Cuartetos', 'Afinidad de Tercias', 'Afinidad de Pares'))
-            levels = [('cuartetos', 1), ('tercias', 2), ('pares', 3)]
-            colors_affinity = {'media': '#1f77b4', 'rango': 'rgba(31,119,180,0.2)'}
+            fig_affinity = make_subplots(
+                rows=3,
+                cols=1,
+                shared_xaxes=True,
+                subplot_titles=(
+                    "Afinidad de Cuartetos",
+                    "Afinidad de Tercias",
+                    "Afinidad de Pares",
+                ),
+            )
+            levels = [("cuartetos", 1), ("tercias", 2), ("pares", 3)]
+            colors_affinity = {"media": "#1f77b4", "rango": "rgba(31,119,180,0.2)"}
             for level, row in levels:
-                fig_affinity.add_trace(go.Scatter(x=df_affinity['ultimo_concurso_usado'], y=df_affinity[f'afin_{level}_max'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=row, col=1)
-                fig_affinity.add_trace(go.Scatter(x=df_affinity['ultimo_concurso_usado'], y=df_affinity[f'afin_{level}_min'], mode='lines', line=dict(width=0), fill='tonexty', fillcolor=colors_affinity['rango'], name='Rango (Min-Max)', hoverinfo='skip'), row=row, col=1)
-                fig_affinity.add_trace(go.Scatter(x=df_affinity['ultimo_concurso_usado'], y=df_affinity[f'afin_{level}_media'], mode='lines', line=dict(color=colors_affinity['media'], width=2), name='Media'), row=row, col=1)
-            fig_affinity.update_layout(height=700, template='simple_white', showlegend=False)
+                fig_affinity.add_trace(
+                    go.Scatter(
+                        x=df_affinity["ultimo_concurso_usado"],
+                        y=df_affinity[f"afin_{level}_max"],
+                        mode="lines",
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    ),
+                    row=row,
+                    col=1,
+                )
+                fig_affinity.add_trace(
+                    go.Scatter(
+                        x=df_affinity["ultimo_concurso_usado"],
+                        y=df_affinity[f"afin_{level}_min"],
+                        mode="lines",
+                        line=dict(width=0),
+                        fill="tonexty",
+                        fillcolor=colors_affinity["rango"],
+                        name="Rango (Min-Max)",
+                        hoverinfo="skip",
+                    ),
+                    row=row,
+                    col=1,
+                )
+                fig_affinity.add_trace(
+                    go.Scatter(
+                        x=df_affinity["ultimo_concurso_usado"],
+                        y=df_affinity[f"afin_{level}_media"],
+                        mode="lines",
+                        line=dict(color=colors_affinity["media"], width=2),
+                        name="Media",
+                    ),
+                    row=row,
+                    col=1,
+                )
+            fig_affinity.update_layout(
+                height=700, template="simple_white", showlegend=False
+            )
 
         # 3. Gráfico de CONTEO de Frecuencias
         if df_freq.empty:
             fig_freq_count = empty_fig
         else:
+            # Definir máximos teóricos
             MAX_PARES = C(39, 2)
             MAX_TERCIAS = C(39, 3)
             MAX_CUARTETOS = C(39, 4)
             
+            # Definir mapa de colores
             color_map = {
                 'Pares': px.colors.qualitative.Plotly[0],
                 'Tercias': px.colors.qualitative.Plotly[1],
                 'Cuartetos': px.colors.qualitative.Plotly[2]
             }
-
+            
+            # Crear subplots
             fig_freq_count = make_subplots(
                 rows=2, cols=1, shared_xaxes=True, 
                 subplot_titles=('Conteo Absoluto de Combinaciones Únicas', 'Porcentaje del Universo Descubierto (%)'),
                 vertical_spacing=0.1
             )
 
-            fig_freq_count.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=df_freq['total_pares_unicos'], name='Pares', line=dict(color=color_map['Pares'])), row=1, col=1)
-            fig_freq_count.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=df_freq['total_tercias_unicas'], name='Tercias', line=dict(color=color_map['Tercias'])), row=1, col=1)
-            fig_freq_count.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=df_freq['total_cuartetos_unicos'], name='Cuartetos', line=dict(color=color_map['Cuartetos'])), row=1, col=1)
+            # --- ARQUITECTURA: Leer nombres de columnas desde config.py ---
+            schema_keys = list(config.FRECUENCIAS_TRAYECTORIA_SCHEMA.keys())
+            key_concurso = schema_keys[0]
+            key_pares = schema_keys[1]
+            key_tercias = schema_keys[3]
+            key_cuartetos = schema_keys[5]
+            
+            # Lógica tolerante por si alguna columna faltara (aunque no debería con la nueva arquitectura)
+            if key_pares in df_freq.columns:
+                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=df_freq[key_pares], name='Pares', line=dict(color=color_map['Pares'])), row=1, col=1)
+                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=(df_freq[key_pares] / MAX_PARES) * 100, name='Pares (%)', showlegend=False, line=dict(color=color_map['Pares'])), row=2, col=1)
 
-            fig_freq_count.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=(df_freq['total_pares_unicos'] / MAX_PARES) * 100, name='Pares (%)', showlegend=False, line=dict(color=color_map['Pares'])), row=2, col=1)
-            fig_freq_count.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=(df_freq['total_tercias_unicas'] / MAX_TERCIAS) * 100, name='Tercias (%)', showlegend=False, line=dict(color=color_map['Tercias'])), row=2, col=1)
-            fig_freq_count.add_trace(go.Scatter(x=df_freq['ultimo_concurso_usado'], y=(df_freq['total_cuartetos_unicos'] / MAX_CUARTETOS) * 100, name='Cuartetos (%)', showlegend=False, line=dict(color=color_map['Cuartetos'])), row=2, col=1)
+            if key_tercias in df_freq.columns:
+                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=df_freq[key_tercias], name='Tercias', line=dict(color=color_map['Tercias'])), row=1, col=1)
+                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=(df_freq[key_tercias] / MAX_TERCIAS) * 100, name='Tercias (%)', showlegend=False, line=dict(color=color_map['Tercias'])), row=2, col=1)
+            
+            if key_cuartetos in df_freq.columns:
+                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=df_freq[key_cuartetos], name='Cuartetos', line=dict(color=color_map['Cuartetos'])), row=1, col=1)
+                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=(df_freq[key_cuartetos] / MAX_CUARTETOS) * 100, name='Cuartetos (%)', showlegend=False, line=dict(color=color_map['Cuartetos'])), row=2, col=1)
             
             fig_freq_count.update_layout(
                 height=600, template='simple_white', legend_title_text='Nivel',
@@ -848,46 +1183,100 @@ if __name__ == "__main__":
             fig_freq_count.update_yaxes(title_text='Conteo Absoluto', row=1, col=1)
             fig_freq_count.update_yaxes(title_text='% Descubierto', row=2, col=1, range=[0, 101])
             fig_freq_count.update_xaxes(title_text='Sorteo Histórico', row=2, col=1)
-            
+
         # 4. Gráfico de UMBRALES
         if df_threshold.empty:
             fig_threshold = empty_fig
         else:
             fig_threshold = px.line(
-                df_threshold, x='ultimo_concurso_usado', y=['umbral_pares', 'umbral_tercias', 'umbral_cuartetos'],
-                template='simple_white', labels={'ultimo_concurso_usado': 'Sorteo Histórico', 'value': 'Valor del Umbral'}
+                df_threshold,
+                x="ultimo_concurso_usado",
+                y=["umbral_pares", "umbral_tercias", "umbral_cuartetos"],
+                template="simple_white",
+                labels={
+                    "ultimo_concurso_usado": "Sorteo Histórico",
+                    "value": "Valor del Umbral",
+                },
             )
-            fig_threshold.update_layout(legend_title_text='Afinidad')
-            
+            fig_threshold.update_layout(legend_title_text="Afinidad")
+
         # 5. Gráfico de HISTOGRAMA DE FRECUENCIAS
         final_freqs = get_frequencies()
         if not final_freqs:
             fig_histogram = empty_fig
         else:
             hist_data = []
-            for level in ['pares', 'tercias', 'cuartetos']:
+            for level in ["pares", "tercias", "cuartetos"]:
                 if final_freqs.get(level):
                     for value in final_freqs[level].values():
-                        hist_data.append({'Frecuencia': value, 'Nivel': level.capitalize()})
-            
+                        hist_data.append(
+                            {"Frecuencia": value, "Nivel": level.capitalize()}
+                        )
+
             if not hist_data:
                 fig_histogram = empty_fig
             else:
                 df_hist = pd.DataFrame(hist_data)
-                
+
                 fig_histogram = px.histogram(
-                    df_hist, x='Frecuencia', color='Nivel',
-                    barmode='overlay', histnorm='percent',
-                    labels={'Frecuencia': 'Veces que ha aparecido una combinación', 'percent': 'Porcentaje de Combinaciones'},
-                    template='simple_white'
+                    df_hist,
+                    x="Frecuencia",
+                    color="Nivel",
+                    barmode="overlay",
+                    histnorm="percent",
+                    labels={
+                        "Frecuencia": "Veces que ha aparecido una combinación",
+                        "percent": "Porcentaje de Combinaciones",
+                    },
+                    template="simple_white",
                 )
                 fig_histogram.update_traces(opacity=0.75)
-                fig_histogram.update_layout(legend_title_text='Nivel')
-                if 'Pares' in df_hist['Nivel'].unique():
-                    x_range_limit = df_hist[df_hist['Nivel'] == 'Pares']['Frecuencia'].quantile(0.99)
+                fig_histogram.update_layout(legend_title_text="Nivel")
+                if "Pares" in df_hist["Nivel"].unique():
+                    x_range_limit = df_hist[df_hist["Nivel"] == "Pares"][
+                        "Frecuencia"
+                    ].quantile(0.99)
                     fig_histogram.update_xaxes(range=[0, x_range_limit])
 
-        return fig_freq_dist, fig_affinity, fig_freq_count, fig_threshold, fig_histogram
+        # 6. Gráfico de HISTOGRAMA DE AFINIDADES
+        df_historico = read_historico_from_db()
+        if df_historico.empty or not all(
+            col in df_historico.columns
+            for col in ["afinidad_pares", "afinidad_tercias", "afinidad_cuartetos"]
+        ):
+            fig_affinity_hist = empty_fig
+        else:
+            affinity_data = []
+            for level in ["pares", "tercias", "cuartetos"]:
+                for value in df_historico[f"afinidad_{level}"]:
+                    affinity_data.append(
+                        {"Afinidad": value, "Nivel": level.capitalize()}
+                    )
+            df_aff_hist = pd.DataFrame(affinity_data)
+
+            fig_affinity_hist = px.histogram(
+                df_aff_hist,
+                x="Afinidad",
+                color="Nivel",
+                barmode="overlay",
+                histnorm="percent",
+                labels={
+                    "Afinidad": "Valor de Afinidad en Sorteos Históricos",
+                    "percent": "Porcentaje de Sorteos",
+                },
+                template="simple_white",
+            )
+            fig_affinity_hist.update_traces(opacity=0.75)
+            fig_affinity_hist.update_layout(legend_title_text="Nivel")
+
+        return (
+            fig_freq_dist,
+            fig_affinity,
+            fig_freq_count,
+            fig_threshold,
+            fig_histogram,
+            fig_affinity_hist,
+        )
 
     # 5. INICIAR EL SERVIDOR
     def open_browser():
@@ -900,229 +1289,546 @@ if __name__ == "__main__":
 
     app.run(debug=False, host="0.0.0.0", port="8050")
 
-#--- START OF FILE presentation.py ---
+# --- START OF FILE presentation.py ---
 
 import dash_bootstrap_components as dbc
 from dash import html, dcc, dash_table
 import plotly.graph_objects as go
 import config
 
+
 def create_header():
     return html.Div(
         [
             html.H1("Zen Lotto", className="text-center text-dark mb-2"),
-            html.P("Plataforma de Análisis para Lotería Melate Retro", className="text-center text-muted"),
+            html.P(
+                "Plataforma de Análisis para Lotería Melate Retro",
+                className="text-center text-muted",
+            ),
         ],
         className="mb-5",
     )
+
 
 def create_navigation():
     buttons = [
         dbc.Button("GENERADOR OMEGA", id="btn-nav-generador", className="nav-button"),
         dbc.Button("GRÁFICOS", id="btn-nav-graficos", className="nav-button"),
         dbc.Button("VISOR HISTÓRICOS", id="btn-nav-historicos", className="nav-button"),
-        dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"),
+        dbc.Button(
+            "REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"
+        ),
         dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
     ]
 
     # Si el modo depuración está activo, insertamos el botón de Monitoreo
     if config.DEBUG_MODE:
-        buttons.insert(3, dbc.Button("MONITOREO", id="btn-nav-monitoreo", className="nav-button"))
+        buttons.insert(
+            3, dbc.Button("MONITOREO", id="btn-nav-monitoreo", className="nav-button")
+        )
 
     return dbc.Row(
         dbc.Col(
             html.Div(
                 dbc.ButtonGroup(buttons, id="navigation-group"),
-                className="nav-pill-container"
+                className="nav-pill-container",
             ),
-            width="auto"
+            width="auto",
         ),
         justify="center",
-        className="mb-5"
+        className="mb-5",
     )
+
 
 def create_generador_view():
     number_inputs = [
-        dbc.Col(dcc.Input(id=f"num-input-{i}", type="number", className="number-box"), width="auto")
+        dbc.Col(
+            dcc.Input(id=f"num-input-{i}", type="number", className="number-box"),
+            width="auto",
+        )
         for i in range(6)
     ]
     clear_button = dbc.Col(
-        dbc.Button(html.I(className="fas fa-trash-alt"), id="btn-clear-inputs", color="secondary", outline=True, className="ms-2"),
-        width="auto", className="d-flex align-items-center"
+        dbc.Button(
+            html.I(className="fas fa-trash-alt"),
+            id="btn-clear-inputs",
+            color="secondary",
+            outline=True,
+            className="ms-2",
+        ),
+        width="auto",
+        className="d-flex align-items-center",
     )
 
     analysis_result_card = dbc.Card(
-        dbc.CardBody([
-            html.H4(id='analysis-title', className="card-title"),
-            html.P(id='analysis-combination-text'),
-            html.Hr(),
-            html.P(id='analysis-score-text'),
-            html.Ul(id='analysis-details-list', className='list-unstyled')
-        ]),
-        id='analysis-result-card',
-        className="mt-4", 
-        style={'display': 'none'}
+        dbc.CardBody(
+            [
+                html.H4(id="analysis-title", className="card-title"),
+                html.P(id="analysis-combination-text"),
+                html.Hr(),
+                html.P(id="analysis-score-text"),
+                html.Ul(id="analysis-details-list", className="list-unstyled"),
+            ]
+        ),
+        id="analysis-result-card",
+        className="mt-4",
+        style={"display": "none"},
     )
 
-    return html.Div([
-        dcc.Store(id='store-validated-omega', data=None),
-        dbc.Row(number_inputs + [clear_button], justify="center", align="center", className="mb-5 g-2"),
-        dbc.Row([
-            dbc.Col(dbc.Button("ANALIZAR COMBINACIÓN", id="btn-analizar", color="dark", className="action-button"), width="auto"),
-            dbc.Col(dbc.Button("GENERAR OMEGA / AJUSTAR", id="btn-generar", color="dark", className="action-button"), width="auto"),
-        ], justify="center", align="center", className="g-3 mb-4"),
-        dbc.Row(dbc.Col(analysis_result_card, width=12, md=8, lg=6), justify="center"),
-        html.Div([
-            dbc.Row(dbc.Col(dcc.Input(id="input-nombre", placeholder="Nombre Completo", className="form-control", disabled=True), width=8, md=6, lg=5, xl=4), justify="center", className="mb-3"),
-            dbc.Row(dbc.Col(dcc.Input(id="input-movil", placeholder="Número de Móvil", type="tel", className="form-control", disabled=True), width=8, md=6, lg=5, xl=4), justify="center", className="mb-4"),
-            dbc.Row(dbc.Col(dbc.Button("REGISTRAR OMEGA", id="btn-registrar", color="dark", outline=True, className="action-button", disabled=True), width="auto"), justify="center"),
-        ], className="mt-5 pt-3")
-    ])
+    return html.Div(
+        [
+            dcc.Store(id="store-validated-omega", data=None),
+            dbc.Row(
+                number_inputs + [clear_button],
+                justify="center",
+                align="center",
+                className="mb-5 g-2",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Button(
+                            "ANALIZAR COMBINACIÓN",
+                            id="btn-analizar",
+                            color="dark",
+                            className="action-button",
+                        ),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "GENERAR OMEGA / AJUSTAR",
+                            id="btn-generar",
+                            color="dark",
+                            className="action-button",
+                        ),
+                        width="auto",
+                    ),
+                ],
+                justify="center",
+                align="center",
+                className="g-3 mb-4",
+            ),
+            dbc.Row(
+                dbc.Col(analysis_result_card, width=12, md=8, lg=6), justify="center"
+            ),
+            html.Div(
+                [
+                    dbc.Row(
+                        dbc.Col(
+                            dcc.Input(
+                                id="input-nombre",
+                                placeholder="Nombre Completo",
+                                className="form-control",
+                                disabled=True,
+                            ),
+                            width=8,
+                            md=6,
+                            lg=5,
+                            xl=4,
+                        ),
+                        justify="center",
+                        className="mb-3",
+                    ),
+                    dbc.Row(
+                        dbc.Col(
+                            dcc.Input(
+                                id="input-movil",
+                                placeholder="Número de Móvil",
+                                type="tel",
+                                className="form-control",
+                                disabled=True,
+                            ),
+                            width=8,
+                            md=6,
+                            lg=5,
+                            xl=4,
+                        ),
+                        justify="center",
+                        className="mb-4",
+                    ),
+                    dbc.Row(
+                        dbc.Col(
+                            dbc.Button(
+                                "REGISTRAR OMEGA",
+                                id="btn-registrar",
+                                color="dark",
+                                outline=True,
+                                className="action-button",
+                                disabled=True,
+                            ),
+                            width="auto",
+                        ),
+                        justify="center",
+                    ),
+                ],
+                className="mt-5 pt-3",
+            ),
+        ]
+    )
+
 
 def create_configuracion_view():
-    return html.Div([
-        html.H3("Configuración y Mantenimiento", className="text-center text-dark mb-4"),
-        dbc.Row([
-            dbc.Col(dbc.Button("1. ACTUALIZAR HISTÓRICO", id="btn-gen-historico", color="dark", className="action-button"), width="auto"),
-            dbc.Col(dbc.Button("2. ACTUALIZAR FRECUENCIAS", id="btn-gen-omega", color="dark", className="action-button"), width="auto"),
-            dbc.Col(dbc.Button("3. OPTIMIZAR UMBRALES (ML)", id="btn-optimize-thresholds", color="primary", className="action-button"), width="auto"),
-            dbc.Col(dbc.Button("4. ENRIQUECER Y PRE-GENERAR", id="btn-enrich-pregen", color="dark", className="action-button"), width="auto"),
-        ], justify="center", className="g-3"),
-        
-        html.Div(
-            [
-                html.P("Procesando, por favor espere...", id="progress-text", className="mt-4 mb-2 text-muted"),
-                dbc.Progress(id="progress-bar", value=0, striped=True, animated=True, style={"height": "20px"}),
-            ],
-            id="progress-container",
-            style={'display': 'none'}
-        )
-    ])
+    return html.Div(
+        [
+            html.H3(
+                "Configuración y Mantenimiento", className="text-center text-dark mb-4"
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Button(
+                            "1. ACTUALIZAR HISTÓRICO",
+                            id="btn-gen-historico",
+                            color="dark",
+                            className="action-button",
+                        ),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "2. ACTUALIZAR FRECUENCIAS",
+                            id="btn-gen-omega",
+                            color="dark",
+                            className="action-button",
+                        ),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "3. OPTIMIZAR UMBRALES (ML)",
+                            id="btn-optimize-thresholds",
+                            color="primary",
+                            className="action-button",
+                        ),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "4. ENRIQUECER Y PRE-GENERAR",
+                            id="btn-enrich-pregen",
+                            color="dark",
+                            className="action-button",
+                        ),
+                        width="auto",
+                    ),
+                ],
+                justify="center",
+                className="g-3",
+            ),
+            html.Div(
+                [
+                    html.P(
+                        "Procesando, por favor espere...",
+                        id="progress-text",
+                        className="mt-4 mb-2 text-muted",
+                    ),
+                    dbc.Progress(
+                        id="progress-bar",
+                        value=0,
+                        striped=True,
+                        animated=True,
+                        style={"height": "20px"},
+                    ),
+                ],
+                id="progress-container",
+                style={"display": "none"},
+            ),
+        ]
+    )
+
 
 def create_registros_view():
-    confirmation_modal = dbc.Modal([
-        dbc.ModalHeader("Confirmar Eliminación"), dbc.ModalBody("¿Estás seguro?"),
-        dbc.ModalFooter([dbc.Button("Cancelar", id="btn-cancel-delete"), dbc.Button("Confirmar", id="btn-confirm-delete", color="danger")]),
-    ], id="modal-confirm-delete", is_open=False)
+    confirmation_modal = dbc.Modal(
+        [
+            dbc.ModalHeader("Confirmar Eliminación"),
+            dbc.ModalBody("¿Estás seguro?"),
+            dbc.ModalFooter(
+                [
+                    dbc.Button("Cancelar", id="btn-cancel-delete"),
+                    dbc.Button("Confirmar", id="btn-confirm-delete", color="danger"),
+                ]
+            ),
+        ],
+        id="modal-confirm-delete",
+        is_open=False,
+    )
 
-    import_modal = dbc.Modal([
-        dbc.ModalHeader("Confirmar Importación"),
-        dbc.ModalBody("Se han encontrado registros existentes. ¿Deseas sobrescribirlos con los datos del archivo de respaldo?"),
-        dbc.ModalFooter([
-            dbc.Button("No Sobrescribir (Solo añadir nuevos)", id="btn-import-no-overwrite", color="secondary"),
-            dbc.Button("Sí, Sobrescribir", id="btn-import-overwrite", color="primary"),
-        ]),
-    ], id="modal-confirm-import", is_open=False)
+    import_modal = dbc.Modal(
+        [
+            dbc.ModalHeader("Confirmar Importación"),
+            dbc.ModalBody(
+                "Se han encontrado registros existentes. ¿Deseas sobrescribirlos con los datos del archivo de respaldo?"
+            ),
+            dbc.ModalFooter(
+                [
+                    dbc.Button(
+                        "No Sobrescribir (Solo añadir nuevos)",
+                        id="btn-import-no-overwrite",
+                        color="secondary",
+                    ),
+                    dbc.Button(
+                        "Sí, Sobrescribir", id="btn-import-overwrite", color="primary"
+                    ),
+                ]
+            ),
+        ],
+        id="modal-confirm-import",
+        is_open=False,
+    )
 
-    return html.Div([
-        dcc.Store(id='store-record-to-delete', data=None), confirmation_modal, import_modal,
-        html.H3("Registro de Combinaciones Omega", className="text-center text-dark mb-4"),
-        
-        dbc.Row([
-            dbc.Col(dbc.Button("Exportar a JSON", id="btn-export-registros", color="success", outline=True), width="auto"),
-            dbc.Col(dbc.Button("Importar desde JSON", id="btn-import-registros", color="info", outline=True), width="auto"),
-            dbc.Col(dbc.Button("Refrescar Datos", id="btn-refresh-registros", className="ms-auto", color="primary", outline=True)),
-        ], className="mb-3"),
-        
-        dash_table.DataTable(id='table-registros',
-        )
-    ])
+    return html.Div(
+        [
+            dcc.Store(id="store-record-to-delete", data=None),
+            confirmation_modal,
+            import_modal,
+            html.H3(
+                "Registro de Combinaciones Omega",
+                className="text-center text-dark mb-4",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Button(
+                            "Exportar a JSON",
+                            id="btn-export-registros",
+                            color="success",
+                            outline=True,
+                        ),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "Importar desde JSON",
+                            id="btn-import-registros",
+                            color="info",
+                            outline=True,
+                        ),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "Refrescar Datos",
+                            id="btn-refresh-registros",
+                            className="ms-auto",
+                            color="primary",
+                            outline=True,
+                        )
+                    ),
+                ],
+                className="mb-3",
+            ),
+            dash_table.DataTable(
+                id="table-registros",
+            ),
+        ]
+    )
+
 
 def create_historicos_view():
-    return html.Div([
-        html.H3("Melate Retro - Registros Históricos", className="text-center text-dark mb-4"),
-        dbc.Row(dbc.Col(dbc.Button("Refrescar Datos", id="btn-refresh-historicos", className="mb-3", color="primary", outline=True)), justify="end"),
-        dash_table.DataTable(id='table-historicos',
-            columns=[
-                {'name': 'Concurso', 'id': 'concurso'}, {'name': 'Fecha', 'id': 'fecha'},
-                {'name': 'R1', 'id': 'r1'}, {'name': 'R2', 'id': 'r2'}, {'name': 'R3', 'id': 'r3'},
-                {'name': 'R4', 'id': 'r4'}, {'name': 'R5', 'id': 'r5'}, {'name': 'R6', 'id': 'r6'},
-                {'name': 'Bolsa', 'id': 'bolsa', 'type': 'numeric', 'format': {'specifier': '$,.0f'}},
-                {'name': 'Clase Omega', 'id': 'es_omega_str'},
-                {'name': 'Omega Score', 'id': 'omega_score', 'type': 'numeric', 'format': {'specifier': '.4f'}},
-                {'name': 'Af. Cuartetos', 'id': 'afinidad_cuartetos'},
-                {'name': 'Af. Tercias', 'id': 'afinidad_tercias'}, {'name': 'Af. Pares', 'id': 'afinidad_pares'},
-            ],
-            data=[], page_size=20, sort_action='native', filter_action='native',
-            style_cell={'textAlign': 'center', 'minWidth': '80px'},
-            style_header={'fontWeight': 'bold', 'backgroundColor': 'rgb(230, 230, 230)'},
-            style_table={'overflowX': 'auto'}, style_data_conditional=[]
-        )
-    ])
+    return html.Div(
+        [
+            html.H3(
+                "Melate Retro - Registros Históricos",
+                className="text-center text-dark mb-4",
+            ),
+            dbc.Row(
+                dbc.Col(
+                    dbc.Button(
+                        "Refrescar Datos",
+                        id="btn-refresh-historicos",
+                        className="mb-3",
+                        color="primary",
+                        outline=True,
+                    )
+                ),
+                justify="end",
+            ),
+            dash_table.DataTable(
+                id="table-historicos",
+                columns=[
+                    {"name": "Concurso", "id": "concurso"},
+                    {"name": "Fecha", "id": "fecha"},
+                    {"name": "R1", "id": "r1"},
+                    {"name": "R2", "id": "r2"},
+                    {"name": "R3", "id": "r3"},
+                    {"name": "R4", "id": "r4"},
+                    {"name": "R5", "id": "r5"},
+                    {"name": "R6", "id": "r6"},
+                    {
+                        "name": "Bolsa",
+                        "id": "bolsa",
+                        "type": "numeric",
+                        "format": {"specifier": "$,.0f"},
+                    },
+                    {"name": "Clase Omega", "id": "es_omega_str"},
+                    {
+                        "name": "Omega Score",
+                        "id": "omega_score",
+                        "type": "numeric",
+                        "format": {"specifier": ".4f"},
+                    },
+                    {"name": "Af. Cuartetos", "id": "afinidad_cuartetos"},
+                    {"name": "Af. Tercias", "id": "afinidad_tercias"},
+                    {"name": "Af. Pares", "id": "afinidad_pares"},
+                ],
+                data=[],
+                page_size=20,
+                sort_action="native",
+                filter_action="native",
+                style_cell={"textAlign": "center", "minWidth": "80px"},
+                style_header={
+                    "fontWeight": "bold",
+                    "backgroundColor": "rgb(230, 230, 230)",
+                },
+                style_table={"overflowX": "auto"},
+                style_data_conditional=[],
+            ),
+        ]
+    )
+
 
 def create_graficos_view():
     def create_graph_card(graph_id, title):
-        return dbc.Card([
-            dbc.CardHeader(html.H5(title, className="mb-0")),
-            dbc.CardBody(dcc.Graph(id=graph_id)),
-        ], className="mb-4")
+        return dbc.Card(
+            [
+                dbc.CardHeader(html.H5(title, className="mb-0")),
+                dbc.CardBody(dcc.Graph(id=graph_id)),
+            ],
+            className="mb-4",
+        )
 
-    return html.Div([
-        html.H3("Gráficos y Estadísticas", className="text-center text-dark mb-4"),
-        dbc.Row(dbc.Col(
-            dbc.Button("Generar/Refrescar Gráficos", id="btn-refresh-graficos", className="mb-3", color="primary")
-        ), justify="end"),
-        
-        dbc.Row([
-            dbc.Col(create_graph_card('graph-universo', 'Clase Omega vs. Universo Total'), md=4),
-            dbc.Col(create_graph_card('graph-historico', 'Clase Omega en Sorteos Históricos'), md=4),
-            dbc.Col(create_graph_card('graph-ganadores', 'Clase Omega en Sorteos con Premio'), md=4),
-        ]),
+    return html.Div(
+        [
+            html.H3("Gráficos y Estadísticas", className="text-center text-dark mb-4"),
+            dbc.Row(
+                dbc.Col(
+                    dbc.Button(
+                        "Generar/Refrescar Gráficos",
+                        id="btn-refresh-graficos",
+                        className="mb-3",
+                        color="primary",
+                    )
+                ),
+                justify="end",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        create_graph_card(
+                            "graph-universo", "Clase Omega vs. Universo Total"
+                        ),
+                        md=4,
+                    ),
+                    dbc.Col(
+                        create_graph_card(
+                            "graph-historico", "Clase Omega en Sorteos Históricos"
+                        ),
+                        md=4,
+                    ),
+                    dbc.Col(
+                        create_graph_card(
+                            "graph-ganadores", "Clase Omega en Sorteos con Premio"
+                        ),
+                        md=4,
+                    ),
+                ]
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        dbc.Card(
+                            [
+                                dbc.CardHeader(
+                                    html.H5(
+                                        "Omega Score vs. Bolsa Acumulada (Sorteos Ganadores)",
+                                        className="mb-0",
+                                    )
+                                ),
+                                dbc.CardBody(dcc.Graph(id="graph-scatter-score-bolsa")),
+                            ]
+                        ),
+                        width=12,
+                    )
+                ]
+            ),
+        ]
+    )
 
-        dbc.Row([
-            dbc.Col(
-                dbc.Card([
-                    dbc.CardHeader(html.H5("Omega Score vs. Bolsa Acumulada (Sorteos Ganadores)", className="mb-0")),
-                    dbc.CardBody(dcc.Graph(id='graph-scatter-score-bolsa')),
-                ]),
-                width=12
-            )
-        ])
-    ])
 
 def create_monitoring_view():
     """Crea el layout para la nueva pestaña de Monitoreo Estadístico."""
-    
+
     def create_graph_card(graph_id, title, subtitle):
         return dbc.Card(
-            dbc.CardBody([
-                html.H5(title, className="card-title"),
-                html.H6(subtitle, className="card-subtitle text-muted mb-3"),
-                dcc.Graph(id=graph_id)
-            ]),
-            className="mb-4"
+            dbc.CardBody(
+                [
+                    html.H5(title, className="card-title"),
+                    html.H6(subtitle, className="card-subtitle text-muted mb-3"),
+                    dcc.Graph(id=graph_id),
+                ]
+            ),
+            className="mb-4",
         )
 
-    return html.Div([
-        html.H3("Panel de Control de Salud y Monitoreo Estadístico", className="text-center text-dark mb-4"),
-        html.P("Esta sección permite vigilar la consistencia del modelo a lo largo del tiempo. "
-               "Cualquier salto o comportamiento anómalo en estas curvas puede indicar un cambio en la naturaleza del sorteo "
-               "o un efecto secundario de una modificación en el código.", className="text-center text-muted"),
-        dbc.Row(dbc.Col(
-            dbc.Button("Generar/Refrescar Gráficos de Monitoreo", id="btn-refresh-monitoring", className="mb-4", color="primary", style={'width': '100%'})
-        )),
-        
-        dbc.Row([
-            dbc.Col(create_graph_card(
-                'graph-affinity-trajectory', 
-                "Evolución de la Distribución de Afinidades",
-                "Muestra la media (línea sólida) y el rango (mín/máx) de las afinidades para todos los sorteos históricos en cada punto."
-            ), width=12),
-        ]),
-        
-        dbc.Row([
-            dbc.Col(create_graph_card(
-                'graph-freq-trajectory', 
-                "Evolución de las Frecuencias Base",
-                "Curvas de crecimiento del modelo estadístico. Deberían aplanarse con el tiempo."
-            ), md=6),
-            dbc.Col(create_graph_card(
-                'graph-threshold-trajectory', 
-                "Evolución de Umbrales Óptimos",
-                "Resultado de la optimización de ML en cada punto de la trayectoria."
-            ), md=6),
-        ]),
-    ])
+    return html.Div(
+        [
+            html.H3(
+                "Panel de Control de Salud y Monitoreo Estadístico",
+                className="text-center text-dark mb-4",
+            ),
+            html.P(
+                "Esta sección permite vigilar la consistencia del modelo a lo largo del tiempo. "
+                "Cualquier salto o comportamiento anómalo en estas curvas puede indicar un cambio en la naturaleza del sorteo "
+                "o un efecto secundario de una modificación en el código.",
+                className="text-center text-muted",
+            ),
+            dbc.Row(
+                dbc.Col(
+                    dbc.Button(
+                        "Generar/Refrescar Gráficos de Monitoreo",
+                        id="btn-refresh-monitoring",
+                        className="mb-4",
+                        color="primary",
+                        style={"width": "100%"},
+                    )
+                )
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        create_graph_card(
+                            "graph-affinity-trajectory",
+                            "Evolución de la Distribución de Afinidades",
+                            "Muestra la media (línea sólida) y el rango (mín/máx) de las afinidades para todos los sorteos históricos en cada punto.",
+                        ),
+                        width=12,
+                    ),
+                ]
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        create_graph_card(
+                            "graph-freq-trajectory",
+                            "Evolución de las Frecuencias Base",
+                            "Curvas de crecimiento del modelo estadístico. Deberían aplanarse con el tiempo.",
+                        ),
+                        md=6,
+                    ),
+                    dbc.Col(
+                        create_graph_card(
+                            "graph-threshold-trajectory",
+                            "Evolución de Umbrales Óptimos",
+                            "Resultado de la optimización de ML en cada punto de la trayectoria.",
+                        ),
+                        md=6,
+                    ),
+                ]
+            ),
+        ]
+    )
+
 
 def create_layout():
     return dbc.Container(
@@ -1130,7 +1836,7 @@ def create_layout():
             create_header(),
             create_navigation(),
             html.Div(id="view-content"),
-            html.Div(id="notification-container", className="mt-4")
+            html.Div(id="notification-container", className="mt-4"),
         ],
         fluid=False,
         className="main-container",

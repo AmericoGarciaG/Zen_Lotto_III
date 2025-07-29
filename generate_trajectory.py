@@ -11,138 +11,93 @@ from modules import database as db
 from modules import ml_optimizer
 from modules.omega_logic import _calculate_subsequence_affinity
 import config
+import importlib
+from typing import Dict, Any
+
+# Forzar la re-lectura del archivo de configuración para evitar problemas de caché
+importlib.reload(config)
 
 setup_logger()
 logger = logging.getLogger(__name__)
 
-setup_logger()
-logger = logging.getLogger(__name__)
 
-def calculate_frequencies_for_subset(df_subset):
-    from collections import Counter
-    from itertools import combinations
-    freq_pairs, freq_triplets, freq_quartets = Counter(), Counter(), Counter()
-    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-    for _, row in df_subset.iterrows():
-        try:
-            draw = sorted([int(row[col]) for col in result_columns])
-            freq_pairs.update(combinations(draw, 2))
-            freq_triplets.update(combinations(draw, 3))
-            freq_quartets.update(combinations(draw, 4))
-        except (ValueError, TypeError): continue
-    return {
-        "pares": dict(freq_pairs),
-        "tercias": dict(freq_triplets),
-        "cuartetos": dict(freq_quartets)
+def prepare_database_for_trajectory():
+    """
+    BORRA y RECREA dinámicamente las tablas de trayectoria usando los esquemas de config.py.
+    """
+    logger.info("=" * 30)
+    logger.info("FASE PREPARATORIA: Reconstruyendo Tablas de Trayectoria")
+    logger.info("=" * 30)
+    
+    schemas = {
+        'umbrales_trayectoria': config.UMBRALES_TRAYECTORIA_SCHEMA,
+        'frecuencias_trayectoria': config.FRECUENCIAS_TRAYECTORIA_SCHEMA,
+        'afinidades_trayectoria': config.AFINIDADES_TRAYECTORIA_SCHEMA,
+        'freq_dist_trayectoria': config.FREQ_DIST_TRAYECTORIA_SCHEMA
     }
-
-def save_trajectory_point(concurso_num, report):
+    
     conn = None
     try:
-        conn = sqlite3.connect(config.DB_FILE)
+        conn = sqlite3.connect(config.DB_FILE, timeout=10.0)
         cursor = conn.cursor()
-        query = """
-            INSERT OR REPLACE INTO umbrales_trayectoria 
-            (ultimo_concurso_usado, umbral_pares, umbral_tercias, umbral_cuartetos, 
-             cobertura_historica, cobertura_universal_estimada, fecha_calculo)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-        """
-        thresholds = report['new_thresholds']
-        params = (
-            int(concurso_num), int(thresholds.get('pares', 0)),
-            int(thresholds.get('tercias', 0)), int(thresholds.get('cuartetos', 0)),
-            float(report.get('cobertura_historica', 0.0)),
-            float(report.get('cobertura_universal_estimada', 0.0))
-        )
-        cursor.execute(query, params)
+        
+        logger.info("Paso 1: Borrando tablas antiguas...")
+        for table_name in schemas.keys():
+            cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+            logger.info(f"-> Comando DROP para '{table_name}' ejecutado.")
+        
         conn.commit()
+
+        logger.info("Paso 2: Recreando esquemas de tabla dinámicamente desde config.py...")
+        for table_name, schema_dict in schemas.items():
+            columns_def = ", ".join([f"{col_name} {col_type}" for col_name, col_type in schema_dict.items()])
+            create_query = f"CREATE TABLE {table_name} ({columns_def});"
+            cursor.execute(create_query)
+            logger.info(f"-> Tabla '{table_name}' creada con éxito.")
+            
+        conn.commit()
+        logger.info("PREPARACIÓN DE BASE DE DATOS COMPLETADA CON ÉXITO.")
+        
     except Exception as e:
-        logger.error(f"Error guardando punto de trayectoria de umbrales para {concurso_num}: {e}")
+        logger.error(f"FALLO CRÍTICO al preparar la base de datos: {e}", exc_info=True)
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def save_trajectory_data(table_name, schema_dict, data_dict):
+    """
+    Función genérica y dinámica para guardar datos en cualquier tabla de trayectoria.
+    Utiliza el schema de config.py como única fuente de verdad.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(config.DB_FILE, timeout=10.0)
+        cursor = conn.cursor()
+        
+        cols_to_insert = [col for col in schema_dict.keys() if col != 'fecha_calculo']
+        
+        column_names_sql = ", ".join(cols_to_insert) + ", fecha_calculo"
+        placeholders_sql = ", ".join(["?"] * len(cols_to_insert)) + ", datetime('now', 'localtime')"
+
+        query = f"INSERT OR REPLACE INTO {table_name} ({column_names_sql}) VALUES ({placeholders_sql})"
+        
+        # Construir la tupla de parámetros en el orden exacto definido por el schema
+        params_tuple = tuple(data_dict[col] for col in cols_to_insert)
+
+        cursor.execute(query, params_tuple)
+        conn.commit()
+    except KeyError as e:
+        logger.error(f"KeyError guardando en '{table_name}'. Clave faltante: {e}. Diccionario: {data_dict.keys()}")
+        raise
+    except Exception as e:
+        logger.error(f"Error guardando datos en '{table_name}': {e}")
     finally:
         if conn: conn.close()
 
-def save_frequency_trajectory_point(concurso_num, metrics):
-    """Guarda las métricas de CONTEO de frecuencias en la BD."""
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        cursor = conn.cursor()
-        query = """
-            INSERT OR REPLACE INTO frecuencias_trayectoria 
-            (ultimo_concurso_usado, total_pares_unicos, suma_freq_pares, 
-             total_tercias_unicas, suma_freq_tercias, total_cuartetos_unicos, 
-             suma_freq_cuartetos, fecha_calculo)
-            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-        """
-        params = (
-            int(concurso_num),
-            metrics['total_pares_unicos'], metrics['suma_freq_pares'],
-            metrics['total_tercias_unicas'], metrics['suma_freq_tercias'],
-            metrics['total_cuartetos_unicos'], metrics['suma_freq_cuartetos']
-        )
-        cursor.execute(query, params)
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error guardando punto de trayectoria de frecuencias para {concurso_num}: {e}")
-    finally:
-        if conn: conn.close()
-
-def save_affinity_trajectory_point(concurso_num, stats):
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        cursor = conn.cursor()
-        query = """
-            INSERT OR REPLACE INTO afinidades_trayectoria 
-            (ultimo_concurso_usado, afin_pares_media, afin_pares_mediana, afin_pares_min, afin_pares_max, 
-             afin_tercias_media, afin_tercias_mediana, afin_tercias_min, afin_tercias_max, 
-             afin_cuartetos_media, afin_cuartetos_mediana, afin_cuartetos_min, afin_cuartetos_max, fecha_calculo)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-        """
-        params = (
-            int(concurso_num),
-            stats['pares']['media'], stats['pares']['mediana'], stats['pares']['min'], stats['pares']['max'],
-            stats['tercias']['media'], stats['tercias']['mediana'], stats['tercias']['min'], stats['tercias']['max'],
-            stats['cuartetos']['media'], stats['cuartetos']['mediana'], stats['cuartetos']['min'], stats['cuartetos']['max']
-        )
-        cursor.execute(query, params)
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error guardando punto de trayectoria de afinidades para {concurso_num}: {e}")
-    finally:
-        if conn: conn.close()
-
-def save_freq_dist_trajectory_point(concurso_num, stats):
-    """Guarda las estadísticas de la distribución de valores de frecuencias en la BD."""
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        cursor = conn.cursor()
-        query = """
-            INSERT OR REPLACE INTO freq_dist_trayectoria 
-            (ultimo_concurso_usado, freq_pares_media, freq_pares_min, freq_pares_max, 
-             freq_tercias_media, freq_tercias_min, freq_tercias_max, 
-             freq_cuartetos_media, freq_cuartetos_min, freq_cuartetos_max, fecha_calculo)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-        """
-        params = (
-            int(concurso_num),
-            stats['pares']['media'], stats['pares']['min'], stats['pares']['max'],
-            stats['tercias']['media'], stats['tercias']['min'], stats['tercias']['max'],
-            stats['cuartetos']['media'], stats['cuartetos']['min'], stats['cuartetos']['max']
-        )
-        cursor.execute(query, params)
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Error guardando punto de trayectoria de dist. de freqs para {concurso_num}: {e}")
-    finally:
-        if conn: conn.close()
 
 def update_frequencies_incrementally(df_slice, master_freqs):
-    """
-    Calcula frecuencias solo para un nuevo trozo de datos y las suma
-    a un diccionario de frecuencias maestro.
-    """
     freq_pairs, freq_triplets, freq_quartets = Counter(), Counter(), Counter()
     result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
     for _, row in df_slice.iterrows():
@@ -153,18 +108,18 @@ def update_frequencies_incrementally(df_slice, master_freqs):
             freq_quartets.update(combinations(draw, 4))
         except (ValueError, TypeError):
             continue
-    
     master_freqs['pares'].update(freq_pairs)
     master_freqs['tercias'].update(freq_triplets)
     master_freqs['cuartetos'].update(freq_quartets)
-    
     return master_freqs
 
 def main(block_size=100):
     logger.info("=" * 60)
-    logger.info("INICIANDO SCRIPT DE GENERACIÓN DE TRAYECTORIA (MODO INCREMENTAL)")
+    logger.info("INICIANDO SCRIPT DE GENERACIÓN DE TRAYECTORIA (ARQUITECTURA DINÁMICA)")
     logger.info(f"Tamaño de bloque configurado: {block_size} sorteos")
     logger.info("=" * 60)
+    
+    prepare_database_for_trajectory()
     
     df_full_historico = db.read_historico_from_db()
     if df_full_historico.empty:
@@ -183,12 +138,7 @@ def main(block_size=100):
     
     script_start_time = time.time()
     
-    # Inicializar contadores maestros de frecuencias
-    master_frequencies = {
-        'pares': Counter(),
-        'tercias': Counter(),
-        'cuartetos': Counter()
-    }
+    master_frequencies = {'pares': Counter(), 'tercias': Counter(), 'cuartetos': Counter()}
     last_processed_index = 0
     
     for i, end_index in enumerate(analysis_points):
@@ -202,47 +152,64 @@ def main(block_size=100):
         
         logger.info(f"--- Procesando Bloque {i+1}/{len(analysis_points)} (hasta concurso {ultimo_concurso}, {len(df_slice)} nuevos sorteos) ---")
         
-        # 1. CÁLCULO INCREMENTAL DE FRECUENCIAS
         master_frequencies = update_frequencies_incrementally(df_slice, master_frequencies)
         
-        # 1A. Guardar métricas de CONTEO de frecuencias
+        # 1. Guardar métricas de CONTEO de frecuencias
         freq_count_metrics = {
-            'total_pares_unicos': len(master_frequencies['pares']), 'suma_freq_pares': sum(master_frequencies['pares'].values()),
-            'total_tercias_unicas': len(master_frequencies['tercias']), 'suma_freq_tercias': sum(master_frequencies['tercias'].values()),
-            'total_cuartetos_unicos': len(master_frequencies['cuartetos']), 'suma_freq_cuartetos': sum(master_frequencies['cuartetos'].values())
+            "ultimo_concurso_usado": ultimo_concurso,
+            "total_pares_unicos": len(master_frequencies['pares']),
+            "suma_freq_pares": sum(master_frequencies['pares'].values()),
+            "total_tercias_unicos": len(master_frequencies['tercias']),
+            "suma_freq_tercias": sum(master_frequencies['tercias'].values()),
+            "total_cuartetos_unicos": len(master_frequencies['cuartetos']),
+            "suma_freq_cuartetos": sum(master_frequencies['cuartetos'].values()),
         }
-        save_frequency_trajectory_point(ultimo_concurso, freq_count_metrics)
+        save_trajectory_data('frecuencias_trayectoria', config.FRECUENCIAS_TRAYECTORIA_SCHEMA, freq_count_metrics)
 
-        # 1B. Guardar métricas de DISTRIBUCIÓN de valores de frecuencias
-        freq_dist_stats = {}
+        # 2. Guardar métricas de DISTRIBUCIÓN de valores de frecuencias
+        # --- CORRECCIÓN CLAVE: Tipado explícito del diccionario ---
+        freq_dist_metrics: Dict[str, Any] = {"ultimo_concurso_usado": ultimo_concurso}
         for level in ['pares', 'tercias', 'cuartetos']:
             values = list(master_frequencies[level].values())
             if not values: values = [0]
-            freq_dist_stats[level] = {'media': float(np.mean(values)), 'min': int(np.min(values)), 'max': int(np.max(values))}
-        save_freq_dist_trajectory_point(ultimo_concurso, freq_dist_stats)
-        
-        # 2. CÁLCULO DE AFINIDADES (esto sí se recalcula para todo el subset)
+            freq_dist_metrics[f'freq_{level}_media'] = float(np.mean(values))
+            freq_dist_metrics[f'freq_{level}_min'] = int(np.min(values))
+            freq_dist_metrics[f'freq_{level}_max'] = int(np.max(values))
+        save_trajectory_data('freq_dist_trayectoria', config.FREQ_DIST_TRAYECTORIA_SCHEMA, freq_dist_metrics)
+
+        # 3. Guardar métricas de AFINIDADES
         afin_p, afin_t, afin_q = [], [], []
-        result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
         for _, row in df_subset.iterrows():
-            combo = sorted([int(row[col]) for col in result_columns])
+            combo = sorted([int(row[col]) for col in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']])
             afin_p.append(_calculate_subsequence_affinity(combo, master_frequencies, 2))
             afin_t.append(_calculate_subsequence_affinity(combo, master_frequencies, 3))
             afin_q.append(_calculate_subsequence_affinity(combo, master_frequencies, 4))
-    
-        affinity_stats = {
-            'pares': {'media': float(np.mean(afin_p)), 'mediana': float(np.median(afin_p)), 'min': int(np.min(afin_p)), 'max': int(np.max(afin_p))},
-            'tercias': {'media': float(np.mean(afin_t)), 'mediana': float(np.median(afin_t)), 'min': int(np.min(afin_t)), 'max': int(np.max(afin_t))},
-            'cuartetos': {'media': float(np.mean(afin_q)), 'mediana': float(np.median(afin_q)), 'min': int(np.min(afin_q)), 'max': int(np.max(afin_q))}
+        
+        affinity_metrics: Dict[str, Any] = {
+            "ultimo_concurso_usado": ultimo_concurso,
+            "afin_pares_media": float(np.mean(afin_p)), "afin_pares_mediana": float(np.median(afin_p)),
+            "afin_pares_min": int(np.min(afin_p)), "afin_pares_max": int(np.max(afin_p)),
+            "afin_tercias_media": float(np.mean(afin_t)), "afin_tercias_mediana": float(np.median(afin_t)),
+            "afin_tercias_min": int(np.min(afin_t)), "afin_tercias_max": int(np.max(afin_t)),
+            "afin_cuartetos_media": float(np.mean(afin_q)), "afin_cuartetos_mediana": float(np.median(afin_q)),
+            "afin_cuartetos_min": int(np.min(afin_q)), "afin_cuartetos_max": int(np.max(afin_q)),
         }
-        save_affinity_trajectory_point(ultimo_concurso, affinity_stats)
-    
-        # 3. CÁLCULO DE UMBRALES (sigue siendo paralelo internamente)
-        # Convertimos Counters a dicts para pasarlo al optimizador
+        save_trajectory_data('afinidades_trayectoria', config.AFINIDADES_TRAYECTORIA_SCHEMA, affinity_metrics)
+
+        # 4. Guardar UMBRALES
         freqs_for_optimizer = {k: dict(v) for k, v in master_frequencies.items()}
         success, _, report = ml_optimizer.run_optimization(df_subset, freqs_for_optimizer)
         if success and isinstance(report, dict) and 'new_thresholds' in report:
-            save_trajectory_point(ultimo_concurso, report)
+            thresholds = report['new_thresholds']
+            umbrales_metrics: Dict[str, Any] = {
+                "ultimo_concurso_usado": ultimo_concurso,
+                "umbral_pares": int(thresholds.get('pares', 0)),
+                "umbral_tercias": int(thresholds.get('tercias', 0)),
+                "umbral_cuartetos": int(thresholds.get('cuartetos', 0)),
+                "cobertura_historica": float(report.get('cobertura_historica', 0.0)),
+                "cobertura_universal_estimada": float(report.get('cobertura_universal_estimada', 0.0)),
+            }
+            save_trajectory_data('umbrales_trayectoria', config.UMBRALES_TRAYECTORIA_SCHEMA, umbrales_metrics)
         else:
             logging.error(f"La optimización de umbrales falló para el bloque hasta el sorteo {ultimo_concurso}.")
         

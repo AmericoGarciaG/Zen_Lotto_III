@@ -297,12 +297,13 @@ def read_trajectory_data():
         return pd.DataFrame()
 
 def read_freq_trajectory_data():
+    """Lee la tabla 'frecuencias_trayectoria' y la devuelve como un DataFrame."""
     try:
         conn = sqlite3.connect(config.DB_FILE)
         query = "SELECT * FROM frecuencias_trayectoria ORDER BY ultimo_concurso_usado ASC"
         df = pd.read_sql_query(query, conn)
         conn.close()
-        logger.info(f"DB READ: 'read_freq_trajectory_data' success. Found {len(df)} rows.")
+        logger.info(f"DB READ: 'read_freq_trajectory_data' success. Found {len(df)} rows. Columns: {df.columns.tolist()}")
         if not df.empty:
             for col in df.columns:
                 if col != 'fecha_calculo':
@@ -343,4 +344,21 @@ def read_freq_dist_trajectory_data():
         return df
     except (pd.errors.DatabaseError, Exception) as e:
         logger.error(f"Error en 'read_freq_dist_trajectory_data': {e}", exc_info=True)
+        return pd.DataFrame()
+    
+
+def get_omega_class_scores():
+    """
+    Lee solo las columnas de afinidad de la tabla omega_class para un análisis eficiente.
+    """
+    try:
+        conn = sqlite3.connect(config.DB_FILE)
+        # Seleccionamos solo las columnas necesarias para calcular el Omega Score
+        query = "SELECT afinidad_pares, afinidad_tercias, afinidad_cuartetos FROM omega_class"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        logger.info(f"DB READ: 'get_omega_class_scores' success. Found {len(df)} rows.")
+        return df
+    except (pd.errors.DatabaseError, Exception) as e:
+        logger.error(f"Error en 'get_omega_class_scores': {e}", exc_info=True)
         return pd.DataFrame()
