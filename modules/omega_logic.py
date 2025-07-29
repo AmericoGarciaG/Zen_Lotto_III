@@ -272,26 +272,19 @@ def adjust_to_omega(user_combo):
         if closest_combo: return closest_combo, matches
     return None, 0
 
-def deconstruct_affinity(combination: list) -> dict:
+def deconstruct_affinity(combination: list, omega_score: float) -> dict:
     """
-    Deconstructs a combination's affinity scores into their constituent subsequences and their frequencies.
-
-    Args:
-        combination (list): A list of 6 integers.
-
-    Returns:
-        dict: A dictionary containing the detailed breakdown of affinity scores, or an error dict.
+    Deconstruye las afinidades de una combinación y sus frecuencias.
     """
     freqs = get_frequencies()
     if not freqs:
         return {"error": "Frecuencias no disponibles."}
 
-    # Use evaluate_combination to get score and totals
     eval_result = evaluate_combination(combination, freqs)
     if eval_result.get("error"):
         return eval_result
 
-    # Generate subsequences
+    # Generar subsecuencias
     pares = list(combinations(sorted(combination), 2))
     tercias = list(combinations(sorted(combination), 3))
     cuartetos = list(combinations(sorted(combination), 4))
@@ -302,25 +295,18 @@ def deconstruct_affinity(combination: list) -> dict:
     freq_map_cuartetos = freqs.get("cuartetos", {})
 
     # Build breakdown lists
-    breakdown_pares = [
-        {"subsequence": str(p), "frequency": freq_map_pares.get(p, 0)} for p in pares
-    ]
-    breakdown_tercias = [
-        {"subsequence": str(t), "frequency": freq_map_tercias.get(t, 0)} for t in tercias
-    ]
-    breakdown_cuartetos = [
-        {"subsequence": str(c), "frequency": freq_map_cuartetos.get(c, 0)} for c in cuartetos
-    ]
+    breakdown_pares = [{"subsequence": str(p), "frequency": freq_map_pares.get(p, 0)} for p in pares]
+    breakdown_tercias = [{"subsequence": str(t), "frequency": freq_map_tercias.get(t, 0)} for t in tercias]
+    breakdown_cuartetos = [{"subsequence": str(c), "frequency": freq_map_cuartetos.get(c, 0)} for c in cuartetos]
 
     # Sort by frequency
     breakdown_pares.sort(key=lambda x: x["frequency"], reverse=True)
     breakdown_tercias.sort(key=lambda x: x["frequency"], reverse=True)
     breakdown_cuartetos.sort(key=lambda x: x["frequency"], reverse=True)
 
-    # Structure the final output
     deconstructed_data = {
         "combination": eval_result.get("combinacion"),
-        "omega_score": eval_result.get("omegaScore"),
+        "omega_score": omega_score, # Usar el score de la tabla para consistencia
         "totals": {
             "pares": eval_result.get("afinidadPares"),
             "tercias": eval_result.get("afinidadTercias"),
@@ -333,5 +319,4 @@ def deconstruct_affinity(combination: list) -> dict:
         },
         "error": None
     }
-
     return deconstructed_data

@@ -4,13 +4,16 @@ import time
 import sqlite3
 import sys
 import numpy as np
-import multiprocessing as mp
+from collections import Counter
+from itertools import combinations
 from utils.logger_config import setup_logger
-from utils.parallel_utils import NoDaemonPool
 from modules import database as db
 from modules import ml_optimizer
 from modules.omega_logic import _calculate_subsequence_affinity
 import config
+
+setup_logger()
+logger = logging.getLogger(__name__)
 
 setup_logger()
 logger = logging.getLogger(__name__)
@@ -135,71 +138,33 @@ def save_freq_dist_trajectory_point(concurso_num, stats):
     finally:
         if conn: conn.close()
 
-def process_trajectory_block(args):
-    """Función trabajadora que procesa un único bloque de la trayectoria."""
-    end_index, df_full_historico = args
-    iter_start_time = time.time()
-    df_subset = df_full_historico.head(end_index)
-    ultimo_concurso = int(df_subset.iloc[-1]['concurso'])
-    
-    logging.info(f"--- [Worker] Iniciando bloque hasta concurso {ultimo_concurso} ({end_index} sorteos) ---")
-    
-    # 1. CÁLCULO DE FRECUENCIAS
-    freqs_subset = calculate_frequencies_for_subset(df_subset)
-    
-    # 1A. Guardar métricas de CONTEO de frecuencias
-    freq_count_metrics = {
-        'total_pares_unicos': len(freqs_subset['pares']), 'suma_freq_pares': sum(freqs_subset['pares'].values()),
-        'total_tercias_unicas': len(freqs_subset['tercias']), 'suma_freq_tercias': sum(freqs_subset['tercias'].values()),
-        'total_cuartetos_unicos': len(freqs_subset['cuartetos']), 'suma_freq_cuartetos': sum(freqs_subset['cuartetos'].values())
-    }
-    save_frequency_trajectory_point(ultimo_concurso, freq_count_metrics)
-
-    # 1B. Guardar métricas de DISTRIBUCIÓN de valores de frecuencias
-    freq_dist_stats = {}
-    for level in ['pares', 'tercias', 'cuartetos']:
-        values = list(freqs_subset[level].values())
-        if not values:
-            values = [0]
-        freq_dist_stats[level] = {
-            'media': float(np.mean(values)),
-            'min': int(np.min(values)),
-            'max': int(np.max(values))
-        }
-    save_freq_dist_trajectory_point(ultimo_concurso, freq_dist_stats)
-    
-    # 2. CÁLCULO DE AFINIDADES
-    afin_p, afin_t, afin_q = [], [], []
+def update_frequencies_incrementally(df_slice, master_freqs):
+    """
+    Calcula frecuencias solo para un nuevo trozo de datos y las suma
+    a un diccionario de frecuencias maestro.
+    """
+    freq_pairs, freq_triplets, freq_quartets = Counter(), Counter(), Counter()
     result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-    for _, row in df_subset.iterrows():
-        combo = sorted([int(row[col]) for col in result_columns])
-        afin_p.append(_calculate_subsequence_affinity(combo, freqs_subset, 2))
-        afin_t.append(_calculate_subsequence_affinity(combo, freqs_subset, 3))
-        afin_q.append(_calculate_subsequence_affinity(combo, freqs_subset, 4))
+    for _, row in df_slice.iterrows():
+        try:
+            draw = sorted([int(row[col]) for col in result_columns])
+            freq_pairs.update(combinations(draw, 2))
+            freq_triplets.update(combinations(draw, 3))
+            freq_quartets.update(combinations(draw, 4))
+        except (ValueError, TypeError):
+            continue
     
-    affinity_stats = {
-        'pares': {'media': float(np.mean(afin_p)), 'mediana': float(np.median(afin_p)), 'min': int(np.min(afin_p)), 'max': int(np.max(afin_p))},
-        'tercias': {'media': float(np.mean(afin_t)), 'mediana': float(np.median(afin_t)), 'min': int(np.min(afin_t)), 'max': int(np.max(afin_t))},
-        'cuartetos': {'media': float(np.mean(afin_q)), 'mediana': float(np.median(afin_q)), 'min': int(np.min(afin_q)), 'max': int(np.max(afin_q))}
-    }
-    save_affinity_trajectory_point(ultimo_concurso, affinity_stats)
+    master_freqs['pares'].update(freq_pairs)
+    master_freqs['tercias'].update(freq_triplets)
+    master_freqs['cuartetos'].update(freq_quartets)
     
-    # 3. CÁLCULO DE UMBRALES
-    success, _, report = ml_optimizer.run_optimization(df_subset, freqs_subset)
-    if success and isinstance(report, dict) and 'new_thresholds' in report:
-        save_trajectory_point(ultimo_concurso, report)
-    else:
-        logging.error(f"La optimización de umbrales falló para el bloque hasta el sorteo {ultimo_concurso}.")
-    
-    iter_time = time.time() - iter_start_time
-    logging.info(f"--- [Worker] Bloque hasta concurso {ultimo_concurso} completado en {iter_time:.2f} segundos. ---")
-    return True
+    return master_freqs
 
 def main(block_size=100):
-    logger.info("="*60)
-    logger.info("INICIANDO SCRIPT DE GENERACIÓN DE TRAYECTORIA (ARQUITECTURA ANIDADA)")
+    logger.info("=" * 60)
+    logger.info("INICIANDO SCRIPT DE GENERACIÓN DE TRAYECTORIA (MODO INCREMENTAL)")
     logger.info(f"Tamaño de bloque configurado: {block_size} sorteos")
-    logger.info("="*60)
+    logger.info("=" * 60)
     
     df_full_historico = db.read_historico_from_db()
     if df_full_historico.empty:
@@ -214,31 +179,82 @@ def main(block_size=100):
     if total_sorteos not in analysis_points:
         analysis_points.append(total_sorteos)
 
-    logger.info(f"Se analizarán {len(analysis_points)} puntos de la trayectoria en paralelo.")
-    
-    worker_args = [(point, df_full_historico) for point in analysis_points]
+    logger.info(f"Se analizarán {len(analysis_points)} puntos de la trayectoria: {analysis_points}")
     
     script_start_time = time.time()
     
-    n_processes = min(mp.cpu_count(), 16)
-    logger.info(f"Creando un Pool NoDaemon con {n_processes} procesos...")
+    # Inicializar contadores maestros de frecuencias
+    master_frequencies = {
+        'pares': Counter(),
+        'tercias': Counter(),
+        'cuartetos': Counter()
+    }
+    last_processed_index = 0
     
-    with NoDaemonPool(processes=n_processes) as pool:
-        results = pool.map(process_trajectory_block, worker_args)
+    for i, end_index in enumerate(analysis_points):
+        iter_start_time = time.time()
+        
+        df_subset = df_full_historico.head(end_index)
+        df_slice = df_full_historico.iloc[last_processed_index:end_index]
+        last_processed_index = end_index
+        
+        ultimo_concurso = int(df_subset.iloc[-1]['concurso'])
+        
+        logger.info(f"--- Procesando Bloque {i+1}/{len(analysis_points)} (hasta concurso {ultimo_concurso}, {len(df_slice)} nuevos sorteos) ---")
+        
+        # 1. CÁLCULO INCREMENTAL DE FRECUENCIAS
+        master_frequencies = update_frequencies_incrementally(df_slice, master_frequencies)
+        
+        # 1A. Guardar métricas de CONTEO de frecuencias
+        freq_count_metrics = {
+            'total_pares_unicos': len(master_frequencies['pares']), 'suma_freq_pares': sum(master_frequencies['pares'].values()),
+            'total_tercias_unicas': len(master_frequencies['tercias']), 'suma_freq_tercias': sum(master_frequencies['tercias'].values()),
+            'total_cuartetos_unicos': len(master_frequencies['cuartetos']), 'suma_freq_cuartetos': sum(master_frequencies['cuartetos'].values())
+        }
+        save_frequency_trajectory_point(ultimo_concurso, freq_count_metrics)
 
-    if all(results):
-        logger.info("Todos los bloques de la trayectoria se procesaron con éxito.")
-    else:
-        logger.warning("Algunos bloques de la trayectoria pudieron haber fallado. Revise los logs.")
+        # 1B. Guardar métricas de DISTRIBUCIÓN de valores de frecuencias
+        freq_dist_stats = {}
+        for level in ['pares', 'tercias', 'cuartetos']:
+            values = list(master_frequencies[level].values())
+            if not values: values = [0]
+            freq_dist_stats[level] = {'media': float(np.mean(values)), 'min': int(np.min(values)), 'max': int(np.max(values))}
+        save_freq_dist_trajectory_point(ultimo_concurso, freq_dist_stats)
+        
+        # 2. CÁLCULO DE AFINIDADES (esto sí se recalcula para todo el subset)
+        afin_p, afin_t, afin_q = [], [], []
+        result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
+        for _, row in df_subset.iterrows():
+            combo = sorted([int(row[col]) for col in result_columns])
+            afin_p.append(_calculate_subsequence_affinity(combo, master_frequencies, 2))
+            afin_t.append(_calculate_subsequence_affinity(combo, master_frequencies, 3))
+            afin_q.append(_calculate_subsequence_affinity(combo, master_frequencies, 4))
+    
+        affinity_stats = {
+            'pares': {'media': float(np.mean(afin_p)), 'mediana': float(np.median(afin_p)), 'min': int(np.min(afin_p)), 'max': int(np.max(afin_p))},
+            'tercias': {'media': float(np.mean(afin_t)), 'mediana': float(np.median(afin_t)), 'min': int(np.min(afin_t)), 'max': int(np.max(afin_t))},
+            'cuartetos': {'media': float(np.mean(afin_q)), 'mediana': float(np.median(afin_q)), 'min': int(np.min(afin_q)), 'max': int(np.max(afin_q))}
+        }
+        save_affinity_trajectory_point(ultimo_concurso, affinity_stats)
+    
+        # 3. CÁLCULO DE UMBRALES (sigue siendo paralelo internamente)
+        # Convertimos Counters a dicts para pasarlo al optimizador
+        freqs_for_optimizer = {k: dict(v) for k, v in master_frequencies.items()}
+        success, _, report = ml_optimizer.run_optimization(df_subset, freqs_for_optimizer)
+        if success and isinstance(report, dict) and 'new_thresholds' in report:
+            save_trajectory_point(ultimo_concurso, report)
+        else:
+            logging.error(f"La optimización de umbrales falló para el bloque hasta el sorteo {ultimo_concurso}.")
+        
+        iter_time = time.time() - iter_start_time
+        logger.info(f"Bloque completado en {iter_time:.2f} segundos.")
 
     script_total_time = time.time() - script_start_time
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info(f"GENERACIÓN DE TRAYECTORIA COMPLETA. Tiempo total: {script_total_time / 60:.2f} minutos.")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
 if __name__ == "__main__":
-    mp.freeze_support()
-    
     if len(sys.argv) > 1:
         try:
             block_size_arg = int(sys.argv[1])

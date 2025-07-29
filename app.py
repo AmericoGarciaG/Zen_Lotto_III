@@ -595,7 +595,8 @@ if __name__ == "__main__":
                 return [], []
             df["es_omega_str"] = df["es_omega"].apply(lambda x: "Sí" if x == 1 else "No")
             df["fecha"] = pd.to_datetime(df["fecha"]).dt.strftime("%d/%m/%Y")
-            df["analizar"] = "[🔍](#)"
+            df["analizar"] = "[🔍]"
+            df['id'] = df['concurso']
 
 
             styles = [
@@ -629,10 +630,18 @@ if __name__ == "__main__":
 
         from modules.omega_logic import deconstruct_affinity
 
-        row_data = table_data[active_cell['row']]
-        combination = [row_data[f'r{i}'] for i in range(1, 7)]
+        row_id = active_cell.get('row_id')
+        if not row_id:
+            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
+        
+        row_data = next((item for item in table_data if item["id"] == row_id), None)
+        if not row_data:
+            return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
 
-        data = deconstruct_affinity(combination)
+        combination = [row_data[f'r{i}'] for i in range(1, 7)]
+        omega_score = row_data.get('omega_score', 0.0)
+
+        data = deconstruct_affinity(combination, omega_score)
 
         if data.get("error"):
             # Optionally, display an alert to the user
