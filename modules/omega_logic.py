@@ -1,322 +1,263 @@
+# omega_logic.py
+
 import json
 from collections import Counter
-from itertools import combinations
+from itertools import combinations, islice
 import logging
 from math import factorial
 import pandas as pd
-import modules.database as db
-import config
+import numpy as np
+from typing import Dict, Any, List, Tuple, Optional
+from functools import partial
+import multiprocessing as mp
+import os
+
+from utils.parallel_utils import NoDaemonPool
+from modules import database as db
 from utils import state_manager
 
 logger = logging.getLogger(__name__)
 
-_historical_draws_set_cache = None
-
-def _get_historical_draws_set():
-    """
-    Carga y cachea el set de combinaciones históricas para una comprobación rápida.
-    """
-    global _historical_draws_set_cache
-    if _historical_draws_set_cache is not None:
-        return _historical_draws_set_cache
-    
-    logger.info("Caching historical draws set for the first time...")
-    df_historico = db.read_historico_from_db()
-    if df_historico.empty:
-        _historical_draws_set_cache = set()
-    else:
-        result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-        # Convertimos a numpy para velocidad, ordenamos y convertimos a tupla para el set
-        np_draws = df_historico[result_columns].to_numpy()
-        _historical_draws_set_cache = {tuple(sorted(row)) for row in np_draws}
-    
-    logger.info(f"Cached {len(_historical_draws_set_cache)} historical draws.")
-    return _historical_draws_set_cache
-
-_frequencies_cache = None
-def get_frequencies():
-    global _frequencies_cache
-    if _frequencies_cache is not None: return _frequencies_cache
+# --- FUNCIONES DE AYUDA (Sin cambios) ---
+def get_frequencies(game_config: Dict[str, Any]) -> Optional[Dict[str, Dict[tuple, int]]]:
+    freq_file = game_config['paths']['frequencies']
     try:
-        with open(config.FREQUENCIES_FILE, 'r', encoding='utf-8') as f: data = json.load(f)
-        _frequencies_cache = {
-            "pares": {eval(k): v for k, v in data.get("FREQ_PARES", {}).items()},
-            "tercias": {eval(k): v for k, v in data.get("FREQ_TERCIAS", {}).items()},
-            "cuartetos": {eval(k): v for k, v in data.get("FREQ_CUARTETOS", {}).items()}
-        }
-        return _frequencies_cache
-    except (FileNotFoundError, json.JSONDecodeError): return None
+        with open(freq_file, 'r', encoding='utf-8') as f: data = json.load(f)
+        return {"pares": {eval(k): v for k, v in data.get("FREQ_PARES", {}).items()}, "tercias": {eval(k): v for k, v in data.get("FREQ_TERCIAS", {}).items()}, "cuartetos": {eval(k): v for k, v in data.get("FREQ_CUARTETOS", {}).items()}}
+    except (FileNotFoundError, json.JSONDecodeError):
+        logger.warning(f"No se pudo cargar el archivo de frecuencias: {freq_file}"); return None
 
-def _calculate_subsequence_affinity(combination, freqs, size):
+def get_loaded_thresholds(game_config: Dict[str, Any]) -> Dict[str, int]:
+    thresholds_file = game_config['paths']['thresholds']
+    try:
+        with open(thresholds_file, 'r', encoding='utf-8') as f: return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        logger.warning(f"No se encontró '{thresholds_file}'. Usando valores por defecto."); return game_config['omega_config']['default_thresholds']
+
+def get_historical_draws_set(game_config: Dict[str, Any]) -> set:
+    db_path = game_config['paths']['db']
+    df_historico = db.read_historico_from_db(db_path)
+    if df_historico.empty: return set()
+    result_columns = game_config['data_source']['result_columns']
+    valid_columns = [col for col in result_columns if col in df_historico.columns]
+    if not valid_columns: return set()
+    np_draws = df_historico[valid_columns].to_numpy()
+    return {tuple(sorted(row)) for row in np_draws}
+
+def _calculate_subsequence_affinity(combination: List[int], freqs: Dict, size: int) -> int:
     key_map = {2: "pares", 3: "tercias", 4: "cuartetos"}
     if not freqs or key_map[size] not in freqs: return 0
     total_affinity = 0
-    subsequences = combinations(sorted(combination), size)
     freq_map = freqs[key_map[size]]
-    for sub in subsequences: total_affinity += freq_map.get(sub, 0)
+    for sub in combinations(sorted(combination), size): total_affinity += freq_map.get(sub, 0)
     return total_affinity
 
-def evaluate_combination(combination, freqs):
-    """
-    Evalúa una combinación y también comprueba si ha salido históricamente.
-    """
-    if not isinstance(combination, list) or len(set(combination)) != 6: return {"error": "Entrada inválida."}
+def evaluate_combination(combination: List[int], freqs: Dict, game_config: Dict[str, Any], loaded_thresholds: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    n = game_config['n']
+    if not isinstance(combination, list) or len(set(combination)) != n: return {"error": f"Entrada inválida. Se esperan {n} números únicos."}
+    thresholds = loaded_thresholds if loaded_thresholds is not None else get_loaded_thresholds(game_config)
+    weights = game_config['omega_config']['score_weights']
     af_p = _calculate_subsequence_affinity(combination, freqs, 2)
     af_t = _calculate_subsequence_affinity(combination, freqs, 3)
     af_q = _calculate_subsequence_affinity(combination, freqs, 4)
-    c_p = af_p >= config.UMBRAL_PARES
-    c_t = af_t >= config.UMBRAL_TERCIAS
-    c_q = af_q >= config.UMBRAL_CUARTETOS
-    es_omega = sum([c_p, c_t, c_q]) == 3
-    s_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
-    s_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
-    s_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
-
-    historical_set = _get_historical_draws_set()
+    c_p = af_p >= thresholds.get('pares', 0)
+    c_t = af_t >= thresholds.get('tercias', 0)
+    c_q = af_q >= thresholds.get('cuartetos', 0)
+    es_omega = all([c_p, c_t, c_q])
+    s_p = ((af_p - thresholds.get('pares', 0)) / (thresholds.get('pares', 1) or 1)) * weights.get('pares', 0)
+    s_t = ((af_t - thresholds.get('tercias', 0)) / (thresholds.get('tercias', 1) or 1)) * weights.get('tercias', 0)
+    s_q = ((af_q - thresholds.get('cuartetos', 0)) / (thresholds.get('cuartetos', 1) or 1)) * weights.get('cuartetos', 0)
+    omega_score = s_p + s_t + s_q
+    historical_set = game_config.get('_historical_set_cache')
+    if historical_set is None:
+        historical_set = get_historical_draws_set(game_config)
+        game_config['_historical_set_cache'] = historical_set
     ha_salido = tuple(sorted(combination)) in historical_set
+    return {"error": None, "esOmega": es_omega, "omegaScore": omega_score, "haSalido": ha_salido, "combinacion": sorted(combination), "afinidadPares": af_p, "afinidadTercias": af_t, "afinidadCuartetos": af_q, "criterios": {"pares": {"cumple": c_p, "score": af_p, "umbral": thresholds.get('pares', 0)}, "tercias": {"cumple": c_t, "score": af_t, "umbral": thresholds.get('tercias', 0)}, "cuartetos": {"cumple": c_q, "score": af_q, "umbral": thresholds.get('cuartetos', 0)}}}
 
-    return {
-        "error": None, "esOmega": es_omega, "omegaScore": s_q + s_t + s_p, "haSalido": ha_salido,
-        "combinacion": sorted(combination), "afinidadPares": af_p, "afinidadTercias": af_t, "afinidadCuartetos": af_q,
-        "criterios": {"pares": {"cumple": c_p, "score": af_p, "umbral": config.UMBRAL_PARES},
-                      "tercias": {"cumple": c_t, "score": af_t, "umbral": config.UMBRAL_TERCIAS},
-                      "cuartetos": {"cumple": c_q, "score": af_q, "umbral": config.UMBRAL_CUARTETOS}}
-    }
-
-def C(n, k): return factorial(n) // (factorial(k) * factorial(n - k))
-
-# --- FUNCIÓN CORREGIDA ---
-def calculate_and_save_frequencies():
-    logger.info("Iniciando el cálculo/actualización de frecuencias.")
-    state = state_manager.get_state()
+def calculate_and_save_frequencies(game_config: Dict[str, Any]) -> Tuple[bool, str]:
+    # (sin cambios)
+    logger.info(f"Iniciando cálculo de frecuencias para '{game_config['display_name']}'.")
+    state_file, freq_file, db_path = game_config['paths']['state'], game_config['paths']['frequencies'], game_config['paths']['db']
+    result_columns, affinity_levels = game_config['data_source']['result_columns'], game_config['omega_config']['affinity_levels']
+    state = state_manager.get_state(state_file)
     last_processed_concurso = state.get("last_concurso_for_freqs", 0)
-    df_historico = db.read_historico_from_db()
-    if df_historico.empty: return False, "La base de datos está vacía."
+    df_historico = db.read_historico_from_db(db_path)
+    if df_historico.empty: return False, "La base de datos del juego está vacía."
     df_new_draws = df_historico[df_historico['concurso'] > last_processed_concurso].copy()
     if df_new_draws.empty: return True, "Las frecuencias ya están actualizadas."
-    freqs_data = get_frequencies() or {}
-    freq_pairs, freq_triplets, freq_quartets = Counter(freqs_data.get("pares", {})), Counter(freqs_data.get("tercias", {})), Counter(freqs_data.get("cuartetos", {}))
-    all_new_pairs, all_new_triplets, all_new_quartets = [], [], []
+    freqs_data = get_frequencies(game_config) or {}
+    freq_counters = {2: Counter(freqs_data.get("pares", {})), 3: Counter(freqs_data.get("tercias", {})), 4: Counter(freqs_data.get("cuartetos", {}))}
     for _, row in df_new_draws.iterrows():
-        draw = sorted([int(row[col]) for col in ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']])
-        all_new_pairs.extend(list(combinations(draw, 2)))
-        all_new_triplets.extend(list(combinations(draw, 3)))
-        all_new_quartets.extend(list(combinations(draw, 4)))
-    freq_pairs.update(all_new_pairs); freq_triplets.update(all_new_triplets); freq_quartets.update(all_new_quartets)
-    new_last_processed_concurso = int(df_new_draws['concurso'].max())
-    output_data = {"FREQ_PARES": {str(k): v for k, v in freq_pairs.items()}, "FREQ_TERCIAS": {str(k): v for k, v in freq_triplets.items()}, "FREQ_CUARTETOS": {str(k): v for k, v in freq_quartets.items()}}
-    try:
-        with open(config.FREQUENCIES_FILE, 'w', encoding='utf-8') as f: json.dump(output_data, f, indent=4)
-        state["last_concurso_for_freqs"] = new_last_processed_concurso
-        state_manager.save_state(state)
-        return True, f"Frecuencias actualizadas con éxito usando {len(df_new_draws)} nuevos sorteos."
-    except Exception as e: return False, f"Error al guardar archivo de frecuencias: {e}"
-
-def enrich_historical_data(set_progress=None):
-    """
-    Calcula todas las métricas para el histórico y las guarda en la BD,
-    reportando el progreso si se proporciona una función de callback.
-    """
-    # Importar no_update dentro de la función para mantener los módulos desacoplados
-    from dash import no_update
-    from modules.database import read_historico_from_db, TABLE_NAME_HISTORICO
-    import sqlite3
-
-    logger.info("Iniciando el enriquecimiento de datos históricos...")
-    
-    df_historico = read_historico_from_db()
-    freqs = get_frequencies()
-
-    if df_historico.empty or freqs is None:
-        return False, "No se puede enriquecer. Faltan datos base."
-
-    resultados_omega = []
-    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-    total_rows = len(df_historico)
-    
-    for i, (_, row) in enumerate(df_historico.iterrows()):
         try:
-            combination = [int(row[col]) for col in result_columns]
+            draw = sorted([int(row[col]) for col in result_columns])
+            for level in affinity_levels: freq_counters[level].update(combinations(draw, level))
+        except (ValueError, TypeError):
+            logger.warning(f"Omitiendo fila con datos inválidos en el histórico: {row.get('concurso')}")
+            continue
+    new_last_processed_concurso = int(df_new_draws['concurso'].max())
+    output_data = {"FREQ_PARES": {str(k): v for k, v in freq_counters[2].items()}, "FREQ_TERCIAS": {str(k): v for k, v in freq_counters[3].items()}, "FREQ_CUARTETOS": {str(k): v for k, v in freq_counters[4].items()}}
+    try:
+        with open(freq_file, 'w', encoding='utf-8') as f: json.dump(output_data, f, indent=4)
+        state["last_concurso_for_freqs"] = new_last_processed_concurso
+        state_manager.save_state(state, state_file)
+        return True, f"Frecuencias para '{game_config['display_name']}' actualizadas con {len(df_new_draws)} nuevos sorteos."
+    except Exception as e: return False, f"Error al guardar archivo de frecuencias para '{game_config['display_name']}': {e}"
+
+# --- SECCIÓN DE ENRIQUECIMIENTO PARALELO (CORREGIDA) ---
+
+def _worker_enrich(df_chunk: pd.DataFrame, freqs: Dict, game_config: Dict[str, Any], loaded_thresholds: Dict[str, int]) -> List[Dict]:
+    """Worker para enriquecer un lote del DataFrame histórico."""
+    result_columns = game_config['data_source']['result_columns']
+    resultados_chunk = []
+    
+    for _, row in df_chunk.iterrows():
+        try:
+            combination = [int(row[col]) for col in result_columns] # type: ignore
+            eval_result = evaluate_combination(combination, freqs, game_config, loaded_thresholds)
+            
+            if eval_result.get("error"): continue
+
+            resultados_chunk.append({
+                'concurso': row['concurso'],
+                'es_omega': 1 if eval_result["esOmega"] else 0,
+                'omega_score': round(eval_result["omegaScore"], 4),
+                'afinidad_cuartetos': eval_result["afinidadCuartetos"],
+                'afinidad_tercias': eval_result["afinidadTercias"],
+                'afinidad_pares': eval_result["afinidadPares"],
+            })
         except (ValueError, TypeError):
             continue
-
-        eval_result = evaluate_combination(combination, freqs)
-        
-        af_q, af_t, af_p, es_omega_val = 0, 0, 0, 0
-        omega_score = 0.0
-
-        if isinstance(eval_result, dict) and not eval_result.get("error"):
-            try:
-                af_q = int(eval_result.get('afinidadCuartetos', 0))
-                af_t = int(eval_result.get('afinidadTercias', 0))
-                af_p = int(eval_result.get('afinidadPares', 0))
-                es_omega_val = 1 if eval_result.get("esOmega") else 0
-                
-                score_q = ((af_q - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5 if config.UMBRAL_CUARTETOS > 0 else 0
-                score_t = ((af_t - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3 if config.UMBRAL_TERCIAS > 0 else 0
-                score_p = ((af_p - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2 if config.UMBRAL_PARES > 0 else 0
-                omega_score = score_q + score_t + score_p
-            except (TypeError, ValueError):
-                pass
-        
-        resultados_omega.append({
-            'concurso': row['concurso'], 'es_omega': es_omega_val,
-            'omega_score': round(omega_score, 4), 'afinidad_cuartetos': af_q,
-            'afinidad_tercias': af_t, 'afinidad_pares': af_p
-        })
-        
-        # Llama a set_progress con la tupla completa de 7 elementos
-        if set_progress and (i + 1) % 100 == 0:
-            progress = int(((i + 1) / total_rows) * 50)
-            set_progress((
-                progress, f"Enriqueciendo: {i+1}/{total_rows}", 
-                no_update, no_update, no_update, no_update, no_update
-            ))
             
-    df_omega_stats = pd.DataFrame(resultados_omega)
+    return resultados_chunk
 
-    # --- INICIO DE LA LÓGICA DE CORRECCIÓN DE DATOS ---
-    # 1. Ordenamos por concurso ASCENDENTE para que shift() funcione correctamente
-    df_historico_sorted = df_historico.sort_values(by='concurso', ascending=True)
-    
-    # 2. Creamos la columna 'bolsa_ganada' que contiene el MONTO que se ganó.
-    # La bolsa que se gana es la del concurso ANTERIOR.
-    df_historico_sorted['bolsa_ganada'] = df_historico_sorted['bolsa'].shift(1)
-    
-    # 3. Creamos el flag 'es_ganador'. Un sorteo es el ganador si SU bolsa es 5M.
-    df_historico_sorted['es_ganador'] = (df_historico_sorted['bolsa'] == 5000000).astype(int)
-    
-    # Rellenamos el primer NaN que crea el shift
-    df_historico_sorted['bolsa_ganada'].fillna(0, inplace=True)
-    
-    # Ahora volvemos a ordenar DESC para la visualización en la tabla
-    df_historico_final = df_historico_sorted.sort_values(by='concurso', ascending=False)
-    # --- FIN DE LA LÓGICA DE CORRECCIÓN DE DATOS ---
-    
-    cols_to_drop = [col for col in df_omega_stats.columns if col in df_historico_final.columns and col != 'concurso']
-    df_historico_to_merge = df_historico_final.drop(columns=cols_to_drop)
-    df_enriquecido = pd.merge(df_historico_to_merge, df_omega_stats, on='concurso')
-    
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        df_enriquecido.to_sql(TABLE_NAME_HISTORICO, conn, if_exists='replace', index=False)
-        conn.close()
-        return True, "Datos históricos enriquecidos."
-    except Exception as e:
-        return False, f"Error al guardar histórico enriquecido: {e}"
-
-def pregenerate_omega_class(set_progress=None):
-    """
-    Pre-genera la Clase Omega, reportando el progreso si se proporciona
-    una función de callback.
-    """
-    # Importar no_update dentro de la función
+def enrich_historical_data(game_config: Dict[str, Any], set_progress=None) -> Tuple[bool, str]:
     from dash import no_update
-
-    logger.info("Verificando si la pre-generación es necesaria...")
-    state = state_manager.get_state()
-    last_concurso_for_freqs = state.get("last_concurso_for_freqs", 0)
-    last_concurso_for_omega = state.get("last_concurso_for_omega_class", 0)
     
-    if last_concurso_for_freqs > 0 and last_concurso_for_freqs == last_concurso_for_omega:
-        return True, "Pre-generación ya está actualizada."
-
-    logger.info("Iniciando la pre-generación de Clase Omega...")
-    freqs = get_frequencies()
-    if freqs is None: return False, "Faltan frecuencias para pre-generar."
+    logger.info(f"Iniciando enriquecimiento paralelo para '{game_config['display_name']}'.")
+    db_path = game_config['paths']['db']
     
-    df_historico = db.read_historico_from_db()
-    if df_historico.empty: return False, "Falta histórico para pre-generar."
+    df_historico = db.read_historico_from_db(db_path)
+    freqs = get_frequencies(game_config)
+    loaded_thresholds = get_loaded_thresholds(game_config)
     
-    result_columns = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']
-    historical_draws_set = set(tuple(sorted(row)) for row in df_historico[result_columns].to_numpy())
-    
-    omega_list = []
-    total_combinations = C(39, 6)
-    all_possible_combinations = combinations(range(1, 40), 6)
-    
-    for count, combo in enumerate(all_possible_combinations, 1):
-        # Llama a set_progress con la tupla completa de 7 elementos
-        if set_progress and count % 100000 == 0:
-            progress = 50 + int((count / total_combinations) * 50)
-            set_progress((
-                progress, f"Pre-generando: {count:,}/{total_combinations:,}",
-                no_update, no_update, no_update, no_update, no_update
-            ))
+    if df_historico.empty or freqs is None:
+        return False, "No se puede enriquecer. Faltan datos base."
         
-        result = evaluate_combination(list(combo), freqs)
-        if isinstance(result, dict) and result.get("esOmega"):
-            ha_salido = 1 if combo in historical_draws_set else 0
-            omega_list.append({
-                'c1': combo[0], 'c2': combo[1], 'c3': combo[2],
-                'c4': combo[3], 'c5': combo[4], 'c6': combo[5],
-                'ha_salido': ha_salido, 'afinidad_pares': result['afinidadPares'],
-                'afinidad_tercias': result['afinidadTercias'],
-                'afinidad_cuartetos': result['afinidadCuartetos'],
-            })
+    n_processes = mp.cpu_count()
+    
+    # --- CORRECCIÓN: Dividir los índices del DataFrame en lugar del DataFrame en sí ---
+    indices = np.array_split(df_historico.index, n_processes)
+    df_chunks = [df_historico.loc[idx] for idx in indices if not idx.empty] # type: ignore
+    # --- FIN CORRECCIÓN ---
+    
+    worker_func = partial(_worker_enrich, freqs=freqs, game_config=game_config, loaded_thresholds=loaded_thresholds)
+    
+    all_results = []
+    processed_count = 0
+    total_rows = len(df_historico)
+    
+    with NoDaemonPool(processes=n_processes) as pool:
+        for i, result_chunk in enumerate(pool.imap_unordered(worker_func, df_chunks)):
+            all_results.extend(result_chunk)
+            processed_count += len(df_chunks[i])
+            if set_progress:
+                progress = int((processed_count / total_rows) * 100)
+                set_progress((progress, f"Enriqueciendo: {processed_count}/{total_rows}", no_update, no_update, no_update, no_update, no_update, no_update))
 
+    df_omega_stats = pd.DataFrame(all_results)
+    
+    if 'bolsa' in df_historico.columns and df_historico['bolsa'].max() > 5000000:
+        df_sorted = df_historico.sort_values(by='concurso', ascending=True)
+        df_sorted['bolsa_ganada'] = df_sorted['bolsa'].shift(1).fillna(0)
+        df_sorted['es_ganador'] = (df_sorted['bolsa'] == 5000000).astype(int)
+        df_final = df_sorted.sort_values(by='concurso', ascending=False)
+    else:
+        df_historico['es_ganador'], df_historico['bolsa_ganada'] = 0, 0
+        df_final = df_historico
+        
+    cols_to_drop = [c for c in df_omega_stats.columns if c in df_final.columns and c != 'concurso']
+    df_to_merge = df_final.drop(columns=cols_to_drop, errors='ignore')
+    
+    df_enriquecido = pd.merge(df_to_merge, df_omega_stats, on='concurso', how='left') if not df_omega_stats.empty else df_to_merge
+        
+    success, message = db.save_historico_to_db(df_enriquecido, db_path, mode='replace')
+    return success, f"Enriquecimiento para '{game_config['display_name']}' completado. {message}"
+
+# --- SECCIÓN DE PRE-GENERACIÓN DE ALTO RENDIMIENTO (CORREGIDA) ---
+
+def _worker_pregenerate(combo_chunk: List[tuple], freqs: Dict, thresholds: Dict[str, int], historical_set: set) -> List[Dict]:
+    pid = os.getpid()
+    logger.info(f"[Worker PID: {pid}] Procesando un lote de {len(combo_chunk)} combinaciones.")
+    omega_list_chunk = []
+    for combo in combo_chunk:
+        af_p = sum(freqs['pares'].get(par, 0) for par in combinations(combo, 2))
+        if af_p < thresholds['pares']: continue
+            
+        # --- CORRECCIÓN: Usar 'terc' en lugar de 'ter' ---
+        af_t = sum(freqs['tercias'].get(terc, 0) for terc in combinations(combo, 3))
+        if af_t < thresholds['tercias']: continue
+
+        af_q = sum(freqs['cuartetos'].get(cuart, 0) for cuart in combinations(combo, 4))
+        if af_q < thresholds['cuartetos']: continue
+            
+        data = {f'c{j+1}': num for j, num in enumerate(combo)}
+        data.update({'ha_salido': 1 if combo in historical_set else 0, 'afinidad_pares': af_p, 'afinidad_tercias': af_t, 'afinidad_cuartetos': af_q})
+        omega_list_chunk.append(data)
+    return omega_list_chunk
+
+# ... (El resto del archivo, pregenerate_omega_class y deconstruct_affinity, se mantiene sin cambios)
+def pregenerate_omega_class(game_config: Dict[str, Any], set_progress=None) -> Tuple[bool, str]:
+    from dash import no_update
+    logger.info(f"Verificando pre-generación para '{game_config['display_name']}'.")
+    state = state_manager.get_state(game_config['paths']['state'])
+    last_opt, last_omega = state.get("last_concurso_for_optimization", 0), state.get("last_concurso_for_omega_class", -1)
+    if last_opt > 0 and last_opt == last_omega: return True, "Pre-generación ya está actualizada."
+    freqs = get_frequencies(game_config)
+    if freqs is None: return False, "Faltan frecuencias para pre-generar."
+    thresholds = get_loaded_thresholds(game_config)
+    historical_draws_set = get_historical_draws_set(game_config)
+    n, k = game_config['n'], game_config['k']
+    total_combinations = factorial(k) // (factorial(n) * factorial(k - n))
+    if set_progress: set_progress((5, f"Iniciando pre-generación de {total_combinations:,} combinaciones...", no_update, no_update, no_update, no_update, no_update, no_update))
+    all_possible_combinations = combinations(range(1, k + 1), n)
+    n_processes = mp.cpu_count()
+    chunk_size = (total_combinations + n_processes - 1) // n_processes
+    worker_func = partial(_worker_pregenerate, freqs=freqs, thresholds=thresholds, historical_set=historical_draws_set)
+    omega_list = []
+    processed_count = 0
+    with NoDaemonPool(processes=n_processes) as pool:
+        def chunk_generator(it, size):
+            iterator = iter(it)
+            while True:
+                chunk = list(islice(iterator, size))
+                if not chunk: break
+                yield chunk
+        for i, result_chunk in enumerate(pool.imap_unordered(worker_func, chunk_generator(all_possible_combinations, chunk_size))):
+            omega_list.extend(result_chunk)
+            processed_count += chunk_size
+            if set_progress:
+                progress = 5 + int((min(processed_count, total_combinations) / total_combinations) * 90)
+                set_progress((progress, f"Pre-generando: {min(processed_count, total_combinations):,}/{total_combinations:,}", no_update, no_update, no_update, no_update, no_update, no_update))
+    if set_progress: set_progress((95, "Guardando resultados...", no_update, no_update, no_update, no_update, no_update, no_update))
     omega_df = pd.DataFrame(omega_list)
-    success, message = db.save_omega_class(omega_df)
-    
+    success, message = db.save_omega_class(omega_df, game_config['paths']['db'])
     if success:
-        state["last_concurso_for_omega_class"] = last_concurso_for_freqs
-        state_manager.save_state(state)
-        message = "Pre-generación completada."
-    
-    return success, message
+        state["last_concurso_for_omega_class"] = state.get("last_concurso_for_optimization", 0)
+        state_manager.save_state(state, game_config['paths']['state'])
+    return success, f"Pre-generación para '{game_config['display_name']}' completada. {message}"
 
-def adjust_to_omega(user_combo):
-    logger.info(f"Iniciando ajuste para: {user_combo}")
-    for matches in range(5, 2, -1):
-        closest_combo = db.find_closest_omega(user_combo, matches)
-        if closest_combo: return closest_combo, matches
-    return None, 0
-
-def deconstruct_affinity(combination: list, omega_score: float) -> dict:
-    """
-    Deconstruye las afinidades de una combinación y sus frecuencias.
-    """
-    freqs = get_frequencies()
-    if not freqs:
-        return {"error": "Frecuencias no disponibles."}
-
-    eval_result = evaluate_combination(combination, freqs)
-    if eval_result.get("error"):
-        return eval_result
-
-    # Generar subsecuencias
-    pares = list(combinations(sorted(combination), 2))
-    tercias = list(combinations(sorted(combination), 3))
-    cuartetos = list(combinations(sorted(combination), 4))
-
-    # Get frequency maps
-    freq_map_pares = freqs.get("pares", {})
-    freq_map_tercias = freqs.get("tercias", {})
-    freq_map_cuartetos = freqs.get("cuartetos", {})
-
-    # Build breakdown lists
-    breakdown_pares = [{"subsequence": str(p), "frequency": freq_map_pares.get(p, 0)} for p in pares]
-    breakdown_tercias = [{"subsequence": str(t), "frequency": freq_map_tercias.get(t, 0)} for t in tercias]
-    breakdown_cuartetos = [{"subsequence": str(c), "frequency": freq_map_cuartetos.get(c, 0)} for c in cuartetos]
-
-    # Sort by frequency
-    breakdown_pares.sort(key=lambda x: x["frequency"], reverse=True)
-    breakdown_tercias.sort(key=lambda x: x["frequency"], reverse=True)
-    breakdown_cuartetos.sort(key=lambda x: x["frequency"], reverse=True)
-
-    deconstructed_data = {
-        "combination": eval_result.get("combinacion"),
-        "omega_score": omega_score, # Usar el score de la tabla para consistencia
-        "totals": {
-            "pares": eval_result.get("afinidadPares"),
-            "tercias": eval_result.get("afinidadTercias"),
-            "cuartetos": eval_result.get("afinidadCuartetos"),
-        },
-        "breakdown": {
-            "pares": breakdown_pares,
-            "tercias": breakdown_tercias,
-            "cuartetos": breakdown_cuartetos,
-        },
-        "error": None
-    }
-    return deconstructed_data
+def deconstruct_affinity(combination: List[int], omega_score: float, game_config: Dict[str, Any]) -> Dict[str, Any]:
+    freqs = get_frequencies(game_config)
+    if not freqs: return {"error": "Frecuencias no disponibles."}
+    loaded_thresholds = get_loaded_thresholds(game_config)
+    eval_result = evaluate_combination(combination, freqs, game_config, loaded_thresholds)
+    if eval_result.get("error"): return eval_result
+    breakdown = {}
+    for level, name in [(2, "pares"), (3, "tercias"), (4, "cuartetos")]:
+        if level in game_config['omega_config']['affinity_levels']:
+            subs = list(combinations(sorted(combination), level))
+            freq_map = freqs.get(name, {})
+            breakdown_list = [{"subsequence": str(s), "frequency": freq_map.get(s, 0)} for s in subs]
+            breakdown[name] = sorted(breakdown_list, key=lambda x: x["frequency"], reverse=True)
+    return {"combination": eval_result.get("combinacion"), "omega_score": omega_score, "totals": {"pares": eval_result.get("afinidadPares"), "tercias": eval_result.get("afinidadTercias"), "cuartetos": eval_result.get("afinidadCuartetos")}, "breakdown": breakdown, "error": None}

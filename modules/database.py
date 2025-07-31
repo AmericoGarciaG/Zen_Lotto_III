@@ -1,8 +1,12 @@
+# database.py
+
 import sqlite3
 import pandas as pd
 import logging
 import config
 import json
+import os
+from typing import Dict, Any, List, Tuple, Optional, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -10,173 +14,61 @@ TABLE_NAME_HISTORICO = "historico"
 TABLE_NAME_OMEGA = "omega_class"
 TABLE_NAME_REGISTROS = "registros_omega"
 
-
-def save_historico_to_db(df, mode='replace'):
-    """
-    Guarda un DataFrame en la BD. También se asegura de que las otras tablas existan.
-    """
-    if df.empty and mode == 'append':
-        return True, "No hay nuevos registros que guardar."
-
+def _create_tables_if_not_exist(db_path: str):
+    conn: Optional[sqlite3.Connection] = None
     try:
-        conn = sqlite3.connect(config.DB_FILE)
+        conn = sqlite3.connect(db_path, timeout=10)
         cursor = conn.cursor()
-        
-        cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS {TABLE_NAME_REGISTROS} (
-                combinacion TEXT PRIMARY KEY, nombre_completo TEXT NOT NULL,
-                movil TEXT NOT NULL, fecha_registro DATETIME
-            );
-        """)
-        cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS {TABLE_NAME_OMEGA} (
-                c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER,
-                ha_salido INTEGER, afinidad_pares INTEGER, afinidad_tercias INTEGER,
-                afinidad_cuartetos INTEGER,
-                PRIMARY KEY (c1, c2, c3, c4, c5, c6)
-            );
-        """)
-        cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS umbrales_trayectoria (
-                ultimo_concurso_usado INTEGER PRIMARY KEY,
-                umbral_pares INTEGER NOT NULL,
-                umbral_tercias INTEGER NOT NULL,
-                umbral_cuartetos INTEGER NOT NULL,
-                cobertura_historica REAL NOT NULL,
-                cobertura_universal_estimada REAL NOT NULL,
-                fecha_calculo DATETIME
-            );
-        """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS frecuencias_trayectoria (
-                ultimo_concurso_usado INTEGER PRIMARY KEY,
-                total_pares_unicos INTEGER NOT NULL,
-                suma_freq_pares INTEGER NOT NULL,
-                total_tercias_unicas INTEGER NOT NULL,
-                suma_freq_tercias INTEGER NOT NULL,
-                total_cuartetos_unicos INTEGER NOT NULL,
-                suma_freq_cuartetos INTEGER NOT NULL,
-                fecha_calculo DATETIME
-            );
-        """)
-        logger.info("Asegurada la existencia de la tabla 'frecuencias_trayectoria'.")
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS afinidades_trayectoria (
-                ultimo_concurso_usado INTEGER PRIMARY KEY,
-                afin_pares_media REAL NOT NULL,
-                afin_pares_mediana REAL NOT NULL,
-                afin_pares_min INTEGER NOT NULL,
-                afin_pares_max INTEGER NOT NULL,
-                afin_tercias_media REAL NOT NULL,
-                afin_tercias_mediana REAL NOT NULL,
-                afin_tercias_min INTEGER NOT NULL,
-                afin_tercias_max INTEGER NOT NULL,
-                afin_cuartetos_media REAL NOT NULL,
-                afin_cuartetos_mediana REAL NOT NULL,
-                afin_cuartetos_min INTEGER NOT NULL,
-                afin_cuartetos_max INTEGER NOT NULL,
-                fecha_calculo DATETIME
-            );
-        """)
-        logger.info("Asegurada la existencia de la tabla 'afinidades_trayectoria'.")
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS freq_dist_trayectoria (
-                ultimo_concurso_usado INTEGER PRIMARY KEY,
-                freq_pares_media REAL NOT NULL,
-                freq_pares_min INTEGER NOT NULL,
-                freq_pares_max INTEGER NOT NULL,
-                freq_tercias_media REAL NOT NULL,
-                freq_tercias_min INTEGER NOT NULL,
-                freq_tercias_max INTEGER NOT NULL,
-                freq_cuartetos_media REAL NOT NULL,
-                freq_cuartetos_min INTEGER NOT NULL,
-                freq_cuartetos_max INTEGER NOT NULL,
-                fecha_calculo DATETIME
-            );
-        """)
-        logger.info("Asegurada la existencia de la tabla 'freq_dist_trayectoria'.")
-        
-        df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS {TABLE_NAME_REGISTROS} (combinacion TEXT PRIMARY KEY, nombre_completo TEXT NOT NULL, movil TEXT NOT NULL, fecha_registro DATETIME);")
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS {TABLE_NAME_OMEGA} (c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 INTEGER, ha_salido INTEGER, afinidad_pares INTEGER, afinidad_tercias INTEGER, afinidad_cuartetos INTEGER, PRIMARY KEY (c1, c2, c3, c4, c5, c6, c7, c8));")
+        schemas = {'umbrales_trayectoria': config.UMBRALES_TRAYECTORIA_SCHEMA, 'frecuencias_trayectoria': config.FRECUENCIAS_TRAYECTORIA_SCHEMA, 'afinidades_trayectoria': config.AFINIDADES_TRAYECTORIA_SCHEMA, 'freq_dist_trayectoria': config.FREQ_DIST_TRAYECTORIA_SCHEMA}
+        for table_name, schema_dict in schemas.items():
+            columns_def = ", ".join([f"{col_name} {col_type}" for col_name, col_type in schema_dict.items()])
+            cursor.execute(f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_def});")
         conn.commit()
-        conn.close()
-        
-        action = "guardaron" if mode == 'replace' else "añadieron"
-        message = f"Se {action} {len(df)} registros en la base de datos."
-        return True, message
-
     except Exception as e:
-        return False, f"Error al guardar en la base de datos: {e}"
+        logger.error(f"Error creando tablas en '{db_path}': {e}", exc_info=True)
+    finally:
+        if conn:
+            conn.close()
 
-def read_historico_from_db():
-    """
-    Lee la tabla 'historico' completa, ordenada por el concurso más reciente.
-    """
+def save_historico_to_db(df: pd.DataFrame, db_path: str, mode: Literal['replace', 'append'] = 'replace') -> Tuple[bool, str]:
+    if df.empty and mode == 'append': return True, "No hay nuevos registros que guardar."
+    conn: Optional[sqlite3.Connection] = None
     try:
-        conn = sqlite3.connect(config.DB_FILE)
-        query = f"SELECT * FROM {TABLE_NAME_HISTORICO} ORDER BY concurso DESC"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except pd.errors.DatabaseError:
-        return pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
+        _create_tables_if_not_exist(db_path)
+        conn = sqlite3.connect(db_path)
+        df.to_sql(TABLE_NAME_HISTORICO, conn, if_exists=mode, index=False)
+        action = "guardaron" if mode == 'replace' else "añadieron"
+        return True, f"Se {action} {len(df)} registros en la base de datos."
+    except Exception as e:
+        logger.error(f"Error al guardar en '{os.path.basename(db_path)}': {e}", exc_info=True)
+        return False, f"Error al guardar en '{os.path.basename(db_path)}': {e}"
+    finally:
+        if conn: conn.close()
 
-def save_omega_class(omega_combinations_df):
-    if omega_combinations_df.empty:
-        return False, "No se encontraron combinaciones Omega para guardar."
+def save_omega_class(omega_combinations_df: pd.DataFrame, db_path: str) -> Tuple[bool, str]:
+    if omega_combinations_df.empty: return False, "No se encontraron combinaciones Omega para guardar."
+    conn: Optional[sqlite3.Connection] = None
     try:
-        conn = sqlite3.connect(config.DB_FILE)
+        conn = sqlite3.connect(db_path)
+        for i in range(1, 9):
+            if f'c{i}' not in omega_combinations_df.columns: omega_combinations_df[f'c{i}'] = None
+        cols = [f'c{i}' for i in range(1, 9)] + ['ha_salido', 'afinidad_pares', 'afinidad_tercias', 'afinidad_cuartetos']
+        omega_combinations_df = omega_combinations_df[cols]
         omega_combinations_df.to_sql(TABLE_NAME_OMEGA, conn, if_exists='replace', index=False)
-        conn.close()
         return True, f"Pre-generación completada. Se guardaron {len(omega_combinations_df)} combinaciones Omega."
     except Exception as e:
-        return False, f"Error al guardar la Clase Omega: {e}"
-    
-def get_random_omega_combination():
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        query = f"SELECT c1, c2, c3, c4, c5, c6 FROM {TABLE_NAME_OMEGA} WHERE ha_salido = 0 ORDER BY RANDOM() LIMIT 1"
-        row = pd.read_sql_query(query, conn).iloc[0].tolist()
-        conn.close()
-        return row
-    except (pd.errors.DatabaseError, IndexError, Exception):
+        logger.error(f"Error al guardar la Clase Omega en '{os.path.basename(db_path)}': {e}", exc_info=True)
+        return False, f"Error al guardar la Clase Omega en '{os.path.basename(db_path)}': {e}"
+    finally:
         if conn: conn.close()
-        return None
 
-def find_closest_omega(user_combo, match_count):
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        user_combo_str = ", ".join(map(str, user_combo))
-        query = f"""
-            SELECT c1, c2, c3, c4, c5, c6 FROM {TABLE_NAME_OMEGA}
-            WHERE (
-                (CASE WHEN c1 IN ({user_combo_str}) THEN 1 ELSE 0 END +
-                 CASE WHEN c2 IN ({user_combo_str}) THEN 1 ELSE 0 END +
-                 CASE WHEN c3 IN ({user_combo_str}) THEN 1 ELSE 0 END +
-                 CASE WHEN c4 IN ({user_combo_str}) THEN 1 ELSE 0 END +
-                 CASE WHEN c5 IN ({user_combo_str}) THEN 1 ELSE 0 END +
-                 CASE WHEN c6 IN ({user_combo_str}) THEN 1 ELSE 0 END) = ?
-            ) AND ha_salido = 0
-            ORDER BY RANDOM() LIMIT 1
-        """
-        df = pd.read_sql_query(query, conn, params=(match_count,))
-        conn.close()
-        return df.iloc[0].tolist() if not df.empty else None
-    except Exception:
-        if conn: conn.close()
-        return None
-
-def register_omega_combination(combinacion, nombre, movil):
+def register_omega_combination(combinacion: list, nombre: str, movil: str, db_path: str) -> Tuple[bool, str]:
     combo_str = "-".join(map(str, sorted(combinacion)))
-    conn = None
+    conn: Optional[sqlite3.Connection] = None
     try:
-        conn = sqlite3.connect(config.DB_FILE)
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         query = f"INSERT INTO {TABLE_NAME_REGISTROS} (combinacion, nombre_completo, movil, fecha_registro) VALUES (?, ?, ?, datetime('now', 'localtime'))"
         cursor.execute(query, (combo_str, nombre, movil))
@@ -184,181 +76,137 @@ def register_omega_combination(combinacion, nombre, movil):
         return True, "¡Combinación registrada con éxito!"
     except sqlite3.IntegrityError:
         return False, "Esta combinación ya ha sido registrada."
-    except Exception:
-        return False, "Ocurrió un error inesperado al registrar."
+    except Exception as e:
+        logger.error(f"Error inesperado al registrar: {e}", exc_info=True)
+        return False, f"Ocurrió un error inesperado al registrar: {e}"
     finally:
         if conn: conn.close()
 
-def get_all_registrations():
+def delete_registration(combinacion_str: str, db_path: str) -> Tuple[bool, str]:
+    conn: Optional[sqlite3.Connection] = None
     try:
-        conn = sqlite3.connect(config.DB_FILE)
-        df = pd.read_sql_query(f"SELECT * FROM {TABLE_NAME_REGISTROS}", conn)
-        conn.close()
-        return df
-    except Exception:
-        return pd.DataFrame(columns=['combinacion', 'nombre_completo', 'movil', 'fecha_registro'])
-
-def delete_registration(combinacion_str):
-    conn = None
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         query = f"DELETE FROM {TABLE_NAME_REGISTROS} WHERE combinacion = ?"
         cursor.execute(query, (combinacion_str,))
         conn.commit()
-        if cursor.rowcount > 0: return True, "Registro eliminado con éxito."
-        else: return False, "El registro no fue encontrado."
-    except Exception:
-        return False, "Ocurrió un error inesperado al eliminar."
+        return (True, "Registro eliminado con éxito.") if cursor.rowcount > 0 else (False, "El registro no fue encontrado.")
+    except Exception as e:
+        logger.error(f"Error inesperado al eliminar: {e}", exc_info=True)
+        return False, f"Ocurrió un error inesperado al eliminar."
     finally:
         if conn: conn.close()
 
-def count_omega_class():
-    conn = None
+def import_registrations_from_json(db_path: str, backup_file_path: str, overwrite: bool = False) -> Tuple[int, int, int, str]:
     try:
-        conn = sqlite3.connect(config.DB_FILE)
-        query = f"SELECT COUNT(*) FROM {TABLE_NAME_OMEGA}"
-        count = pd.read_sql_query(query, conn).iloc[0, 0]
-        conn.close()
-        return count
-    except (pd.errors.DatabaseError, IndexError, Exception):
+        with open(backup_file_path, 'r', encoding='utf-8') as f: data = json.load(f)
+    except FileNotFoundError:
+        return 0, 0, 0, f"No se encontró el archivo de respaldo '{os.path.basename(backup_file_path)}'."
+    conn: Optional[sqlite3.Connection] = None
+    added_count, updated_count = 0, 0
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        for record in data:
+            if not all(k in record for k in ['combinacion', 'nombre_completo', 'movil']): continue
+            try:
+                query = f"INSERT INTO {TABLE_NAME_REGISTROS} (combinacion, nombre_completo, movil, fecha_registro) VALUES (?, ?, ?, ?)"
+                cursor.execute(query, (record['combinacion'], record['nombre_completo'], record['movil'], record.get('fecha_registro')))
+                added_count += 1
+            except sqlite3.IntegrityError:
+                if overwrite:
+                    update_query = f"UPDATE {TABLE_NAME_REGISTROS} SET nombre_completo = ?, movil = ? WHERE combinacion = ?"
+                    cursor.execute(update_query, (record['nombre_completo'], record['movil'], record['combinacion']))
+                    updated_count += 1
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error durante la importación desde JSON: {e}", exc_info=True)
+    finally:
         if conn: conn.close()
-        return 0  
+    message = f"Importación finalizada. {added_count} registros añadidos, {updated_count} actualizados."
+    return added_count, updated_count, len(data), message
 
-def export_registrations_to_json():
+def _read_df_from_db(query: str, db_path: str, params: tuple = ()) -> pd.DataFrame:
+    conn: Optional[sqlite3.Connection] = None
     try:
-        df = get_all_registrations()
-        if df.empty:
-            return False, "No hay registros para exportar."
-        
-        if 'fecha_registro' in df.columns:
-            df['fecha_registro'] = df['fecha_registro'].astype(str)
+        conn = sqlite3.connect(db_path)
+        return pd.read_sql_query(query, conn, params=params)
+    except (pd.errors.DatabaseError, sqlite3.Error) as e:
+        logger.warning(f"No se pudo leer de '{os.path.basename(db_path)}'. Error: {e}")
+        return pd.DataFrame()
+    finally:
+        if conn: conn.close()
 
-        df.to_json(config.REGISTROS_BACKUP_FILE, orient='records', indent=4)
-        logger.info(f"Se han exportado {len(df)} registros a '{config.REGISTROS_BACKUP_FILE}'")
+def read_historico_from_db(db_path: str) -> pd.DataFrame:
+    return _read_df_from_db(f"SELECT * FROM {TABLE_NAME_HISTORICO} ORDER BY concurso DESC", db_path)
+
+def get_all_registrations(db_path: str) -> pd.DataFrame:
+    return _read_df_from_db(f"SELECT * FROM {TABLE_NAME_REGISTROS}", db_path)
+
+def get_random_omega_combination(db_path: str, game_config: Dict[str, Any]) -> Optional[List[int]]:
+    n = game_config['n']
+    cols_str = ", ".join([f'c{i}' for i in range(1, n + 1)])
+    df = _read_df_from_db(f"SELECT {cols_str} FROM {TABLE_NAME_OMEGA} WHERE ha_salido = 0 ORDER BY RANDOM() LIMIT 1", db_path)
+    if not df.empty:
+        row_items = df.iloc[0].tolist()
+        return [int(item) for item in row_items if pd.notna(item)]
+    return None
+
+def find_closest_omega(user_combo: list, match_count: int, db_path: str, game_config: Dict[str, Any]) -> Optional[List[int]]:
+    n = game_config['n']
+    cols = [f'c{i}' for i in range(1, n + 1)]
+    user_combo_str = ", ".join(map(str, user_combo))
+    case_statements = [f"CASE WHEN {col} IN ({user_combo_str}) THEN 1 ELSE 0 END" for col in cols]
+    where_condition = f"({' + '.join(case_statements)}) = ?"
+    query = f"SELECT {', '.join(cols)} FROM {TABLE_NAME_OMEGA} WHERE {where_condition} AND ha_salido = 0 ORDER BY RANDOM() LIMIT 1"
+    df = _read_df_from_db(query, db_path, params=(match_count,))
+    if not df.empty:
+        row_items = df.iloc[0].tolist()
+        return [int(item) for item in row_items if pd.notna(item)]
+    return None
+
+def count_omega_class(db_path: str) -> int:
+    df = _read_df_from_db(f"SELECT COUNT(*) FROM {TABLE_NAME_OMEGA}", db_path)
+    if df.empty:
+        return 0
+    
+    # **CORRECCIÓN DEFINITIVA USANDO TRY-EXCEPT**
+    try:
+        count_value = df.iloc[0, 0]
+        # Primero nos aseguramos que no sea un valor nulo de pandas
+        if pd.isna(count_value):
+            return 0
+        # Ahora intentamos la conversión a entero, que es lo que podría fallar
+        return int(count_value) # type: ignore 
+    except (ValueError, TypeError):
+        # Si la conversión falla, registramos el problema y devolvemos 0
+        logger.warning(f"No se pudo convertir el resultado de COUNT(*) a entero en '{os.path.basename(db_path)}'. Se recibió: {df.iloc[0, 0]}. Se devuelve 0.")
+        return 0
+
+def get_omega_class_scores(db_path: str) -> pd.DataFrame:
+    return _read_df_from_db("SELECT afinidad_pares, afinidad_tercias, afinidad_cuartetos FROM omega_class", db_path)
+
+def read_trajectory_data(db_path: str, table_name: str) -> pd.DataFrame:
+    df = _read_df_from_db(f"SELECT * FROM {table_name} ORDER BY ultimo_concurso_usado ASC", db_path)
+    if not df.empty:
+        for col in df.columns:
+            if col != 'fecha_calculo':
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
+
+def export_registrations_to_json(db_path: str, backup_file_path: str) -> Tuple[bool, str]:
+    try:
+        df = get_all_registrations(db_path)
+        if df.empty: return False, "No hay registros para exportar."
+        if 'fecha_registro' in df.columns: df['fecha_registro'] = df['fecha_registro'].astype(str)
+        df.to_json(backup_file_path, orient='records', indent=4)
+        logger.info(f"Se han exportado {len(df)} registros a '{os.path.basename(backup_file_path)}'")
         return True, f"Se han exportado {len(df)} registros con éxito."
     except Exception as e:
         logger.error(f"Error al exportar registros: {e}", exc_info=True)
         return False, "Ocurrió un error durante la exportación."
-
-def import_registrations_from_json(overwrite=False):
-    try:
-        with open(config.REGISTROS_BACKUP_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        return 0, 0, 0, f"No se encontró el archivo de respaldo '{config.REGISTROS_BACKUP_FILE}'."
-    
-    conn = sqlite3.connect(config.DB_FILE)
-    cursor = conn.cursor()
-    
-    added_count = 0
-    updated_count = 0
-    
-    for record in data:
-        combo_str = record.get('combinacion')
-        nombre = record.get('nombre_completo')
-        movil = record.get('movil')
-        fecha = record.get('fecha_registro')
-
-        if not all([combo_str, nombre, movil]):
-            continue
-
-        try:
-            query = f"INSERT INTO {TABLE_NAME_REGISTROS} (combinacion, nombre_completo, movil, fecha_registro) VALUES (?, ?, ?, ?)"
-            cursor.execute(query, (combo_str, nombre, movil, fecha))
-            added_count += 1
-        except sqlite3.IntegrityError:
-            if overwrite:
-                update_query = f"UPDATE {TABLE_NAME_REGISTROS} SET nombre_completo = ?, movil = ? WHERE combinacion = ?"
-                cursor.execute(update_query, (nombre, movil, combo_str))
-                updated_count += 1
-
-    conn.commit()
-    conn.close()
-    
-    message = f"Importación finalizada. {added_count} registros añadidos, {updated_count} actualizados."
-    logger.info(message)
-    return added_count, updated_count, len(data), message
-
-def read_trajectory_data():
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        query = f"SELECT * FROM umbrales_trayectoria ORDER BY ultimo_concurso_usado ASC"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        logger.info(f"DB READ: 'read_trajectory_data' success. Found {len(df)} rows.")
-        if not df.empty:
-            for col in df.columns:
-                if col != 'fecha_calculo':
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df
-    except (pd.errors.DatabaseError, Exception) as e:
-        logger.error(f"Error en 'read_trajectory_data': {e}", exc_info=True)
-        return pd.DataFrame()
-
-def read_freq_trajectory_data():
-    """Lee la tabla 'frecuencias_trayectoria' y la devuelve como un DataFrame."""
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        query = "SELECT * FROM frecuencias_trayectoria ORDER BY ultimo_concurso_usado ASC"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        logger.info(f"DB READ: 'read_freq_trajectory_data' success. Found {len(df)} rows. Columns: {df.columns.tolist()}")
-        if not df.empty:
-            for col in df.columns:
-                if col != 'fecha_calculo':
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df
-    except (pd.errors.DatabaseError, Exception) as e:
-        logger.error(f"Error en 'read_freq_trajectory_data': {e}", exc_info=True)
-        return pd.DataFrame()
-
-def read_affinity_trajectory_data():
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        query = "SELECT * FROM afinidades_trayectoria ORDER BY ultimo_concurso_usado ASC"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        logger.info(f"DB READ: 'read_affinity_trajectory_data' success. Found {len(df)} rows.")
-        if not df.empty:
-            for col in df.columns:
-                if col != 'fecha_calculo':
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df
-    except (pd.errors.DatabaseError, Exception) as e:
-        logger.error(f"Error en 'read_affinity_trajectory_data': {e}", exc_info=True)
-        return pd.DataFrame()
-
-def read_freq_dist_trajectory_data():
-    """Lee la tabla 'freq_dist_trayectoria' y la devuelve como un DataFrame."""
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        query = "SELECT * FROM freq_dist_trayectoria ORDER BY ultimo_concurso_usado ASC"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        logger.info(f"DB READ: 'read_freq_dist_trajectory_data' success. Found {len(df)} rows.")
-        if not df.empty:
-            for col in df.columns:
-                if col != 'fecha_calculo':
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df
-    except (pd.errors.DatabaseError, Exception) as e:
-        logger.error(f"Error en 'read_freq_dist_trajectory_data': {e}", exc_info=True)
-        return pd.DataFrame()
     
 
-def get_omega_class_scores():
-    """
-    Lee solo las columnas de afinidad de la tabla omega_class para un análisis eficiente.
-    """
-    try:
-        conn = sqlite3.connect(config.DB_FILE)
-        # Seleccionamos solo las columnas necesarias para calcular el Omega Score
-        query = "SELECT afinidad_pares, afinidad_tercias, afinidad_cuartetos FROM omega_class"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        logger.info(f"DB READ: 'get_omega_class_scores' success. Found {len(df)} rows.")
-        return df
-    except (pd.errors.DatabaseError, Exception) as e:
-        logger.error(f"Error en 'get_omega_class_scores': {e}", exc_info=True)
-        return pd.DataFrame()
+def read_omega_score_trajectory(db_path: str) -> pd.DataFrame:
+    """Lee la tabla con la trayectoria de los Omega Scores."""
+    return _read_df_from_db("SELECT * FROM omega_score_trajectory ORDER BY concurso ASC", db_path)

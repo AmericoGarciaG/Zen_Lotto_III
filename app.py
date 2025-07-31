@@ -1,61 +1,63 @@
+# app.py
 import time
 import logging
 import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
-import importlib
 import config
 import plotly.express as px
 from threading import Timer
 import webbrowser
 import diskcache
-from dash import DiskcacheManager
-
-import dash
+from dash import (
+    DiskcacheManager,
+    Dash,
+    dcc,
+    html,
+    Input,
+    Output,
+    State,
+    ctx,
+    no_update,
+    ALL,
+)
+from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
-from dash import html, dcc, Input, Output, ctx, State, no_update
+import os
+import json
 
 from utils.logger_config import setup_logger
-from utils import state_manager
 from modules.presentation import create_layout
 
-# --- CONFIGURACIÓN INICIAL (SEGURA PARA IMPORTAR) ---
+# --- CONFIGURACIÓN INICIAL ---
 setup_logger()
 logger = logging.getLogger(__name__)
 
 
-# --- FUNCIONES DE AYUDA (SEGURAS PARA IMPORTAR) ---
-def fue_un_clic_real(button_id):
+# --- FUNCIONES DE AYUDA ---
+def fue_un_clic_real(button_id: str) -> bool:
+    """
+    Verifica si un callback fue disparado por un clic real en un botón específico.
+    Esta es la versión corregida que no usa el obsoleto ctx.n_clicks.
+    """
     if not ctx.triggered:
         return False
-    triggered_component_id = ctx.triggered[0]["prop_id"].split(".")[0]
-    n_clicks = ctx.triggered[0]["value"]
-    return (
-        triggered_component_id == button_id
-        and isinstance(n_clicks, int)
-        and n_clicks > 0
-    )
+
+    triggered_info = ctx.triggered[0]
+    prop_id_str = triggered_info["prop_id"]
+    component_id_str = prop_id_str.split(".")[0]
+
+    if component_id_str.startswith("{"):
+        return False
+
+    if component_id_str != button_id:
+        return False
+
+    value = triggered_info.get("value")
+    return isinstance(value, int) and value > 0
 
 
-def create_donut_chart(values, labels, title):
-    if not any(values):
-        fig = go.Figure()
-        fig.update_layout(
-            title_text=f"{title}<br>(No hay datos disponibles)",
-            title_x=0.5,
-            xaxis={"visible": False},
-            yaxis={"visible": False},
-            annotations=[
-                {
-                    "text": "N/A",
-                    "xref": "paper",
-                    "yref": "paper",
-                    "showarrow": False,
-                    "font": {"size": 28},
-                }
-            ],
-        )
-        return fig
+def create_donut_chart(values, labels, title, game_name):
     fig = go.Figure(
         data=[
             go.Pie(
@@ -69,152 +71,232 @@ def create_donut_chart(values, labels, title):
         ]
     )
     fig.update_layout(
-        title_text=title,
+        title_text=f"{title}<br>({game_name})",
         title_x=0.5,
+        title_y=0.95,  # Posiciona el título cerca de la parte superior (0.95 es 95% hacia arriba)
+        title_yanchor="top",  # Ancla el título desde su parte superior
         showlegend=False,
-        margin=dict(t=50, b=20, l=20, r=20),
+        # Aumentamos el margen superior (t) de 60 a 80
+        margin=dict(t=80, b=20, l=20, r=20),
         height=350,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
     )
+    if not any(v > 0 for v in values):
+        fig.update_layout(
+            annotations=[
+                {
+                    "text": "N/A",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "showarrow": False,
+                    "font": {"size": 28},
+                }
+            ]
+        )
     return fig
 
 
 # --- PUNTO DE ENTRADA PRINCIPAL ---
-# Todo el código de la aplicación ahora reside dentro de este bloque.
 if __name__ == "__main__":
     logger.info("=" * 50)
-    logger.info("INICIO DE LA APLICACIÓN ZEN LOTTO (PROCESO PRINCIPAL)")
+    logger.info("INICIO DE LA APLICACIÓN ZEN LOTTO")
     logger.info("=" * 50)
 
-    # 1. INICIALIZAR EL GESTOR DE CALLBACKS LARGOS
     cache = diskcache.Cache("./cache")
     long_callback_manager = DiskcacheManager(cache)
-
-    # 2. INICIALIZAR LA APP DASH
-    app = dash.Dash(
+    app = Dash(
         __name__,
         external_stylesheets=[dbc.themes.LUX, dbc.icons.FONT_AWESOME],
         suppress_callback_exceptions=True,
         background_callback_manager=long_callback_manager,
     )
     server = app.server
-
-    # 3. ASIGNAR EL LAYOUT
     app.layout = create_layout()
 
-    # 4. DEFINIR TODOS LOS CALLBACKS
-    logger.info("Registrando callbacks de la aplicación...")
+    # --- CALLBACKS DE GESTIÓN DE JUEGO Y UI DINÁMICA ---
+    @app.callback(
+        Output("store-active-game", "data"),
+        Output("game-selector-display", "label"),
+        Input({"type": "game-selector", "index": ALL}, "n_clicks"),
+        State("store-active-game", "data"),
+    )
+    def update_active_game(n_clicks, game_id_on_load):
+        triggered_id = ctx.triggered_id
+        if triggered_id is None:
+            game_id = game_id_on_load or "melate_retro"
+            game_name = config.GAME_REGISTRY[game_id]["display_name"]
+            return game_id, game_name
+        if (
+            isinstance(triggered_id, dict)
+            and triggered_id.get("type") == "game-selector"
+        ):
+            if not any(n_clicks):
+                return no_update, no_update
+            game_id = triggered_id["index"]
+            game_name = config.GAME_REGISTRY[game_id]["display_name"]
+            return game_id, game_name
+        return no_update, no_update
 
-    # --- Callbacks de Navegación ---
+    @app.callback(
+        Output("generador-inputs-container", "children"),
+        Input("store-active-game", "data"),
+    )
+    def update_generator_inputs(game_id):
+        game_config = config.get_game_config(game_id or "melate_retro")
+        n = game_config["n"]
+        inputs = [
+            dbc.Col(
+                dcc.Input(
+                    id={"type": "num-input", "index": i},
+                    type="number",
+                    className="number-box",
+                    min=1,
+                    max=game_config["k"],
+                ),
+                width="auto",
+            )
+            for i in range(n)
+        ]
+        clear_button = dbc.Col(
+            dbc.Button(
+                html.I(className="fas fa-trash-alt"),
+                id="btn-clear-inputs",
+                color="secondary",
+                outline=True,
+                className="ms-2",
+            ),
+            width="auto",
+            className="d-flex align-items-center",
+        )
+        return dbc.Row(
+            inputs + [clear_button], justify="center", align="center", className="g-2"
+        )
+
+    @app.callback(
+        Output({"type": "num-input", "index": ALL}, "value"),
+        Output("store-validated-omega", "data", allow_duplicate=True),
+        Output("analysis-result-card", "style", allow_duplicate=True),
+        Input("btn-clear-inputs", "n_clicks"),
+        State({"type": "num-input", "index": ALL}, "value"),
+        prevent_initial_call=True,
+    )
+    def handle_clear_inputs(n_clicks, current_values):
+        if not fue_un_clic_real("btn-clear-inputs"):
+            return [no_update] * len(current_values), no_update, no_update
+        return [None] * len(current_values), None, {"display": "none"}
+
+    @app.callback(
+        Output("config-game-indicator", "children"),
+        Output("registros-title", "children"),
+        Output("historicos-title", "children"),
+        Input("store-active-game", "data"),
+        Input("view-content", "children"),
+    )
+    def update_view_titles(game_id, _):
+        game_name = config.get_game_config(game_id or "melate_retro")["display_name"]
+        return (
+            f"Ejecutando acciones para: {game_name}",
+            f"Registro de Combinaciones Omega ({game_name})",
+            f"Registros Históricos ({game_name})",
+        )
+
+    # --- CALLBACKS DE NAVEGACIÓN ---
     @app.callback(
         Output("view-content", "children"),
         [
-            Input("btn-nav-generador", "n_clicks"),
-            Input("btn-nav-graficos", "n_clicks"),
-            Input("btn-nav-historicos", "n_clicks"),
-            *([Input("btn-nav-monitoreo", "n_clicks")] if config.DEBUG_MODE else []),
-            Input("btn-nav-registros", "n_clicks"),
-            Input("btn-nav-configuracion", "n_clicks"),
+            Input(f"btn-nav-{view}", "n_clicks")
+            for view in ["generador", "graficos", "historicos"]
+            + (["monitoreo"] if config.DEBUG_MODE else [])
+            + ["registros", "configuracion"]
         ],
     )
     def render_view_content(*args):
-        from modules.presentation import (
-            create_generador_view,
-            create_configuracion_view,
-            create_registros_view,
-            create_historicos_view,
-            create_graficos_view,
-            create_monitoring_view,
-        )
+        from modules import presentation
 
         triggered_id = ctx.triggered_id or "btn-nav-generador"
-
-        if triggered_id == "btn-nav-configuracion":
-            return create_configuracion_view()
-        elif triggered_id == "btn-nav-registros":
-            return create_registros_view()
-        elif triggered_id == "btn-nav-monitoreo" and config.DEBUG_MODE:
-            return create_monitoring_view()
-        elif triggered_id == "btn-nav-historicos":
-            return create_historicos_view()
-        elif triggered_id == "btn-nav-graficos":
-            return create_graficos_view()
-
-        return create_generador_view()
+        view_map = {
+            "btn-nav-configuracion": presentation.create_configuracion_view,
+            "btn-nav-registros": presentation.create_registros_view,
+            "btn-nav-monitoreo": presentation.create_monitoring_view,
+            "btn-nav-historicos": presentation.create_historicos_view,
+            "btn-nav-graficos": presentation.create_graficos_view,
+        }
+        return view_map.get(triggered_id, presentation.create_generador_view)()
 
     @app.callback(
         [
-            Output("btn-nav-generador", "className"),
-            Output("btn-nav-graficos", "className"),
-            Output("btn-nav-historicos", "className"),
-            *([Output("btn-nav-monitoreo", "className")] if config.DEBUG_MODE else []),
-            Output("btn-nav-registros", "className"),
-            Output("btn-nav-configuracion", "className"),
+            Output(f"btn-nav-{view}", "className")
+            for view in ["generador", "graficos", "historicos"]
+            + (["monitoreo"] if config.DEBUG_MODE else [])
+            + ["registros", "configuracion"]
         ],
         [
-            Input("btn-nav-generador", "n_clicks"),
-            Input("btn-nav-graficos", "n_clicks"),
-            Input("btn-nav-historicos", "n_clicks"),
-            *([Input("btn-nav-monitoreo", "n_clicks")] if config.DEBUG_MODE else []),
-            Input("btn-nav-registros", "n_clicks"),
-            Input("btn-nav-configuracion", "n_clicks"),
+            Input(f"btn-nav-{view}", "n_clicks")
+            for view in ["generador", "graficos", "historicos"]
+            + (["monitoreo"] if config.DEBUG_MODE else [])
+            + ["registros", "configuracion"]
         ],
     )
     def update_nav_buttons_style(*args):
         triggered_id = ctx.triggered_id or "btn-nav-generador"
-        base_class = "nav-button"
-
-        views = ["generador", "graficos", "historicos", "registros", "configuracion"]
-        if config.DEBUG_MODE:
-            views.insert(3, "monitoreo")
-
-        styles = {view: base_class for view in views}
-
+        views = (
+            ["generador", "graficos", "historicos"]
+            + (["monitoreo"] if config.DEBUG_MODE else [])
+            + ["registros", "configuracion"]
+        )
+        styles = {view: "nav-button" for view in views}
         active_view = triggered_id.replace("btn-nav-", "")
         if active_view in styles:
             styles[active_view] += " active"
         else:
             styles["generador"] += " active"
-
         return list(styles.values())
 
-    # --- Callbacks de Configuración ---
+    # --- CALLBACKS DE CONFIGURACIÓN ---
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-gen-historico", "n_clicks"),
+        State("store-active-game", "data"),
         prevent_initial_call=True,
     )
-    def handle_historical_load(n_clicks):
+    def handle_historical_load(n_clicks, game_id):
         if not fue_un_clic_real("btn-gen-historico"):
             return no_update
-        from modules.data_ingestion import run_historical_load
-        from modules.database import save_historico_to_db
+        from modules import data_ingestion, database
+        from utils import state_manager
 
-        state = state_manager.get_state()
+        game_config = config.get_game_config(game_id)
+        state = state_manager.get_state(game_config["paths"]["state"])
         last_concurso = state.get("last_concurso_in_db", 0)
-        df_new, _, success = run_historical_load(last_concurso=last_concurso)
+        df_new, message, success = data_ingestion.run_historical_load(
+            game_config, last_concurso
+        )
         if not success or df_new is None:
-            return dbc.Alert("Error durante la carga.", color="danger")
-        save_success, save_msg = save_historico_to_db(df_new, mode="append")
+            return dbc.Alert(message, color="danger")
+        save_success, save_msg = database.save_historico_to_db(
+            df_new, game_config["paths"]["db"], mode="append"
+        )
         if not save_success:
             return dbc.Alert(save_msg, color="danger")
-        if save_success and not df_new.empty:
+        if not df_new.empty:
             state["last_concurso_in_db"] = int(df_new["concurso"].max())
-            state_manager.save_state(state)
-        return dbc.Alert(save_msg, color="success", duration=5000)
+            state_manager.save_state(state, game_config["paths"]["state"])
+        return dbc.Alert(message, color="success", duration=8000)
 
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-gen-omega", "n_clicks"),
+        State("store-active-game", "data"),
         prevent_initial_call=True,
     )
-    def handle_omega_class_generation(n_clicks):
+    def handle_freq_generation(n_clicks, game_id):
         if not fue_un_clic_real("btn-gen-omega"):
             return no_update
-        from modules.omega_logic import calculate_and_save_frequencies
+        from modules import omega_logic
 
-        success, message = calculate_and_save_frequencies()
+        game_config = config.get_game_config(game_id)
+        success, message = omega_logic.calculate_and_save_frequencies(game_config)
         return dbc.Alert(
             message, color="success" if success else "danger", duration=8000
         )
@@ -222,6 +304,7 @@ if __name__ == "__main__":
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-optimize-thresholds", "n_clicks"),
+        State("store-active-game", "data"),
         progress=[
             Output("progress-bar", "value"),
             Output("progress-text", "children"),
@@ -229,202 +312,233 @@ if __name__ == "__main__":
             Output("btn-optimize-thresholds", "disabled"),
             Output("btn-gen-historico", "disabled"),
             Output("btn-gen-omega", "disabled"),
-            Output("btn-enrich-pregen", "disabled"),
+            Output("btn-enrich", "disabled"),
+            Output("btn-pregen", "disabled"),
         ],
         background=True,
         prevent_initial_call=True,
     )
-    def handle_optimize_thresholds(set_progress, n_clicks):
+    def handle_optimize_thresholds(set_progress, n_clicks, game_id):
         if not n_clicks or n_clicks < 1:
-            raise dash.exceptions.PreventUpdate
+            raise PreventUpdate
 
         from modules import ml_optimizer, omega_logic, database
+        from utils import state_manager
 
-        state = state_manager.get_state()
-        last_freqs = state.get("last_concurso_for_freqs", 0)
-        last_opt = state.get("last_concurso_for_optimization", -1)
-
-        if last_freqs == last_opt:
-            return dbc.Alert(
-                "Los umbrales ya están optimizados con los datos más recientes.",
-                color="info",
-                duration=5000,
-            )
-
+        game_config = config.get_game_config(game_id)
+        state_path = game_config["paths"]["state"]
+        state = state_manager.get_state(state_path)
         set_progress(
-            (
-                0,
-                "Iniciando optimización...",
-                {"display": "block"},
-                True,
-                True,
-                True,
-                True,
-            )
+            (0, "Iniciando...", {"display": "block"}, True, True, True, True, True)
         )
-
-        df_historico = database.read_historico_from_db()
-        freqs = omega_logic.get_frequencies()
-        if df_historico.empty or freqs is None:
+        df_historico = database.read_historico_from_db(game_config["paths"]["db"])
+        freqs = omega_logic.get_frequencies(game_config)
+        if df_historico.empty or not freqs:
             set_progress(
-                (100, "Error.", {"display": "none"}, False, False, False, False)
+                (100, "Error.", {"display": "none"}, False, False, False, False, False)
             )
             return dbc.Alert(
                 "Se necesita el histórico y las frecuencias para optimizar.",
                 color="warning",
             )
 
-        start = time.time()
         success, message, report = ml_optimizer.run_optimization(
-            df_historico, freqs, set_progress=set_progress
+            game_config, df_historico, freqs, set_progress=set_progress
         )
-        total_time = time.time() - start
 
-        importlib.reload(config)
-
-        if success and isinstance(report, dict):
-            new_thr, ch, cu = (
-                report.get("new_thresholds", {}),
-                report.get("cobertura_historica", 0),
-                report.get("cobertura_universal_estimada", 0),
-            )
-            details = f"Nuevos umbrales: P={new_thr.get('pares')}, T={new_thr.get('tercias')}, C={new_thr.get('cuartetos')}. | CH: {ch:.1%} | CU (Est.): {cu:.2%}"
-            instruction = " Para aplicar, re-ejecute '4. ENRIQUECER Y PRE-GENERAR'."
-            full_message = (
-                f"{message} {details}{instruction} (Tiempo: {total_time:.2f}s)"
-            )
-
+        if success:
             state["last_concurso_for_optimization"] = state.get(
                 "last_concurso_for_freqs", 0
             )
-            state_manager.save_state(state)
-        else:
-            full_message = f"{message} (Tiempo: {total_time:.2f}s)"
-
+            state_manager.save_state(state, state_path)
         set_progress(
-            (100, "Completado.", {"display": "none"}, False, False, False, False)
+            (100, "Completado.", {"display": "none"}, False, False, False, False, False)
         )
         return dbc.Alert(
-            full_message, color="success" if success else "danger", duration=25000
+            message, color="success" if success else "danger", duration=20000
         )
 
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
-        Input("btn-enrich-pregen", "n_clicks"),
+        Input("btn-enrich", "n_clicks"),
+        State("store-active-game", "data"),
         progress=[
             Output("progress-bar", "value"),
             Output("progress-text", "children"),
             Output("progress-container", "style"),
-            Output("btn-enrich-pregen", "disabled"),
+            Output("btn-enrich", "disabled"),
             Output("btn-gen-historico", "disabled"),
             Output("btn-gen-omega", "disabled"),
             Output("btn-optimize-thresholds", "disabled"),
+            Output("btn-pregen", "disabled"),
         ],
         background=True,
         prevent_initial_call=True,
     )
-    def handle_enrich_and_pregenerate(set_progress, n_clicks):
+    def handle_enrich(set_progress, n_clicks, game_id):
         if not n_clicks or n_clicks < 1:
-            raise dash.exceptions.PreventUpdate
+            raise PreventUpdate
 
-        from modules.omega_logic import enrich_historical_data, pregenerate_omega_class
+        from modules import omega_logic
 
-        state = state_manager.get_state()
-        last_opt = state.get("last_concurso_for_optimization", 0)
-        last_omega_class = state.get("last_concurso_for_omega_class", -1)
-
-        if last_opt > 0 and last_opt == last_omega_class:
-            return dbc.Alert(
-                "Los datos ya están enriquecidos y la Clase Omega pre-generada con los últimos umbrales.",
-                color="info",
-                duration=5000,
-            )
-
-        importlib.reload(config)
-        set_progress((0, "Iniciando...", {"display": "block"}, True, True, True, True))
-
-        success_enrich, msg_enrich = enrich_historical_data(set_progress)
-        if not success_enrich:
-            set_progress(
-                (100, "Error.", {"display": "none"}, False, False, False, False)
-            )
-            return dbc.Alert(f"Falló el enriquecimiento: {msg_enrich}", color="danger")
-
-        success_pregen, msg_pregen = pregenerate_omega_class(set_progress)
-        if not success_pregen:
-            set_progress(
-                (100, "Error.", {"display": "none"}, False, False, False, False)
-            )
-            return dbc.Alert(f"Falló la pre-generación: {msg_pregen}", color="danger")
-
-        full_message = f"Proceso completado. {msg_enrich} {msg_pregen}"
-        state["last_concurso_for_omega_class"] = state.get(
-            "last_concurso_for_optimization", 0
-        )
-        state_manager.save_state(state)
+        game_config = config.get_game_config(game_id)
 
         set_progress(
-            (100, "Completado.", {"display": "none"}, False, False, False, False)
+            (
+                0,
+                "Iniciando enriquecimiento...",
+                {"display": "block"},
+                True,
+                True,
+                True,
+                True,
+                True,
+            )
         )
-        return dbc.Alert(full_message, color="success", duration=15000)
 
-    # --- Callbacks del Generador ---
+        success, message = omega_logic.enrich_historical_data(game_config, set_progress)
+
+        set_progress(
+            (100, "Completado.", {"display": "none"}, False, False, False, False, False)
+        )
+        return dbc.Alert(
+            message, color="success" if success else "danger", duration=15000
+        )
+
     @app.callback(
-        [Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)]
-        + [Output("notification-container", "children", allow_duplicate=True)]
-        + [Output("store-validated-omega", "data", allow_duplicate=True)],
-        Input("btn-generar", "n_clicks"),
-        [State(f"num-input-{i}", "value") for i in range(6)],
+        Output("notification-container", "children", allow_duplicate=True),
+        Input("btn-pregen", "n_clicks"),
+        State("store-active-game", "data"),
+        progress=[
+            Output("progress-bar", "value"),
+            Output("progress-text", "children"),
+            Output("progress-container", "style"),
+            Output("btn-pregen", "disabled"),
+            Output("btn-gen-historico", "disabled"),
+            Output("btn-gen-omega", "disabled"),
+            Output("btn-optimize-thresholds", "disabled"),
+            Output("btn-enrich", "disabled"),
+        ],
+        background=True,
         prevent_initial_call=True,
     )
-    def handle_generate_omega(n_clicks, *num_inputs):
-        if not fue_un_clic_real("btn-generar"):
-            return [no_update] * 8
-        importlib.reload(config)
-        from modules.database import get_random_omega_combination
-        from modules.omega_logic import (
-            evaluate_combination,
-            adjust_to_omega,
-            get_frequencies,
+    def handle_pregenerate(set_progress, n_clicks, game_id):
+        if not n_clicks or n_clicks < 1:
+            raise PreventUpdate
+
+        from modules import omega_logic
+
+        game_config = config.get_game_config(game_id)
+
+        set_progress(
+            (
+                0,
+                "Iniciando pre-generación...",
+                {"display": "block"},
+                True,
+                True,
+                True,
+                True,
+                True,
+            )
         )
 
+        success, message = omega_logic.pregenerate_omega_class(
+            game_config, set_progress
+        )
+
+        set_progress(
+            (100, "Completado.", {"display": "none"}, False, False, False, False, False)
+        )
+        return dbc.Alert(
+            message, color="success" if success else "danger", duration=15000
+        )
+
+    # --- CALLBACKS DEL GENERADOR ---
+    @app.callback(
+        Output({"type": "num-input", "index": ALL}, "value", allow_duplicate=True),
+        Output("notification-container", "children", allow_duplicate=True),
+        Output("store-validated-omega", "data", allow_duplicate=True),
+        Input("btn-generar", "n_clicks"),
+        State("store-active-game", "data"),
+        State({"type": "num-input", "index": ALL}, "value"),
+        prevent_initial_call=True,
+    )
+    def handle_generate_omega(n_clicks, game_id, num_inputs):
+        num_outputs = len(num_inputs)
+        no_update_list = [no_update] * num_outputs
+
+        if not fue_un_clic_real("btn-generar"):
+            return no_update_list, no_update, no_update
+
+        from modules import omega_logic, database
+
+        game_config = config.get_game_config(game_id)
+        db_path = game_config["paths"]["db"]
+
         if all(num is None or num == "" for num in num_inputs):
-            combo = get_random_omega_combination()
+            combo = database.get_random_omega_combination(db_path, game_config)
             if combo:
-                return combo + [None, combo]
-            return [no_update] * 6 + [
-                dbc.Alert("Error al generar.", color="warning"),
-                None,
-            ]
+                return combo, None, combo
+            return no_update_list, dbc.Alert("Error al generar.", color="warning"), None
         else:
             try:
                 user_combo = sorted([int(num) for num in num_inputs])
             except (ValueError, TypeError):
-                return [no_update] * 7 + [None]
-            if len(set(user_combo)) != 6:
-                return [no_update] * 7 + [None]
-            freqs = get_frequencies()
+                return (
+                    no_update_list,
+                    dbc.Alert("Ingrese una combinación válida.", color="warning"),
+                    None,
+                )
+
+            if len(set(user_combo)) != game_config["n"]:
+                return (
+                    no_update_list,
+                    dbc.Alert(
+                        f"Se requieren {game_config['n']} números únicos.",
+                        color="warning",
+                    ),
+                    None,
+                )
+
+            freqs = omega_logic.get_frequencies(game_config)
             if freqs is None:
-                return [no_update] * 7 + [None]
-            eval_result = evaluate_combination(user_combo, freqs)
+                return (
+                    no_update_list,
+                    dbc.Alert("Frecuencias no generadas.", color="danger"),
+                    None,
+                )
+
+            loaded_thresholds = omega_logic.get_loaded_thresholds(game_config)
+            eval_result = omega_logic.evaluate_combination(
+                user_combo, freqs, game_config, loaded_thresholds
+            )
             if eval_result.get("esOmega"):
-                return [no_update] * 6 + [
+                return (
+                    no_update_list,
                     dbc.Alert("¡Tu combinación ya es Omega!", color="success"),
                     user_combo,
-                ]
-            adjusted, matches = adjust_to_omega(user_combo)
-            if adjusted:
-                return adjusted + [
-                    dbc.Alert(
-                        f"¡Ajuste exitoso! Se mantuvieron {matches} números.",
-                        color="info",
-                    ),
-                    adjusted,
-                ]
-            return [no_update] * 6 + [
+                )
+
+            for matches in range(game_config["n"] - 1, 2, -1):
+                adjusted = database.find_closest_omega(
+                    user_combo, matches, db_path, game_config
+                )
+                if adjusted:
+                    return (
+                        adjusted,
+                        dbc.Alert(
+                            f"¡Ajuste exitoso! Se mantuvieron {matches} números.",
+                            color="info",
+                        ),
+                        adjusted,
+                    )
+
+            return (
+                no_update_list,
                 dbc.Alert("No se encontró un ajuste cercano.", color="danger"),
                 None,
-            ]
+            )
 
     @app.callback(
         Output("analysis-result-card", "style"),
@@ -436,87 +550,73 @@ if __name__ == "__main__":
         Output("store-validated-omega", "data", allow_duplicate=True),
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-analizar", "n_clicks"),
-        [State(f"num-input-{i}", "value") for i in range(6)],
+        State("store-active-game", "data"),
+        State({"type": "num-input", "index": ALL}, "value"),
         prevent_initial_call=True,
     )
-    def handle_analizar_combinacion(n_clicks, *num_inputs):
+    def handle_analizar_combinacion(n_clicks, game_id, num_inputs):
         if not fue_un_clic_real("btn-analizar"):
             return (no_update,) * 8
-        importlib.reload(config)
-        from modules.omega_logic import get_frequencies, evaluate_combination
+        from modules import omega_logic
 
-        hidden_style = {"display": "none"}
-        default_return = [hidden_style, "", "", "", "", [], None, None]
+        game_config = config.get_game_config(game_id)
+        n = game_config["n"]
         try:
             if any(num is None or num == "" for num in num_inputs):
-                raise ValueError("Por favor, ingrese 6 números.")
+                raise ValueError(f"Por favor, ingrese {n} números.")
             combination = sorted([int(num) for num in num_inputs])
-            if len(set(combination)) != 6:
-                raise ValueError("Los 6 números deben ser únicos.")
+            if len(set(combination)) != n:
+                raise ValueError(f"Los {n} números deben ser únicos.")
         except (ValueError, TypeError) as e:
-            return default_return[:-1] + [dbc.Alert(str(e), color="warning")]
-        freqs = get_frequencies()
-        if freqs is None:
-            return default_return[:-1] + [
-                dbc.Alert("Frecuencias no generadas.", color="danger")
-            ]
-        result = evaluate_combination(combination, freqs)
-        if not isinstance(result, dict) or result.get("error"):
-            error_msg = (
-                result.get("error", "Error.") if isinstance(result, dict) else "Error."
+            return (
+                {"display": "none"},
+                "",
+                "",
+                "",
+                "",
+                [],
+                None,
+                dbc.Alert(str(e), color="warning"),
             )
-            return default_return[:-1] + [dbc.Alert(error_msg, color="danger")]
+        freqs = omega_logic.get_frequencies(game_config)
+        if freqs is None:
+            return (
+                {"display": "none"},
+                "",
+                "",
+                "",
+                "",
+                [],
+                None,
+                dbc.Alert("Frecuencias no generadas.", color="danger"),
+            )
+        loaded_thresholds = omega_logic.get_loaded_thresholds(game_config)
+        result = omega_logic.evaluate_combination(
+            combination, freqs, game_config, loaded_thresholds
+        )
         es_omega = result.get("esOmega", False)
         title = "¡CLASE OMEGA! ✅" if es_omega else "COMBINACIÓN NO-OMEGA ❌"
-        card_class_base = "mt-4 text-dark p-3"
-        card_class_color = (
-            "border-success bg-success-subtle"
-            if es_omega
-            else "border-danger bg-danger-subtle"
-        )
-        combo_text = f"Tu combinación: {result.get('combinacion', [])}"
-        omega_score = result.get("omegaScore")
-        score_text = (
-            f"Omega Score: {omega_score:.4f}"
-            if isinstance(omega_score, (int, float))
-            else "Omega Score: N/A"
-        )
+        card_class = f"mt-4 text-dark p-3 {'border-success bg-success-subtle' if es_omega else 'border-danger bg-danger-subtle'}"
+        score_text = f"Omega Score: {result.get('omegaScore', 0):.4f}"
         criterios = result.get("criterios", {})
-        if not isinstance(criterios, dict):
-            return default_return[:-1] + [
-                dbc.Alert("Faltan datos de criterios.", color="danger")
-            ]
-        pares, tercias, cuartetos = (
-            criterios.get("pares", {}),
-            criterios.get("tercias", {}),
-            criterios.get("cuartetos", {}),
-        )
         details_list = [
             html.Li(
-                f"Pares: {pares.get('score')} / {pares.get('umbral')} {'✅' if pares.get('cumple') else '❌'}"
-            ),
-            html.Li(
-                f"Tercias: {tercias.get('score')} / {tercias.get('umbral')} {'✅' if tercias.get('cumple') else '❌'}"
-            ),
-            html.Li(
-                f"Cuartetos: {cuartetos.get('score')} / {cuartetos.get('umbral')} {'✅' if cuartetos.get('cumple') else '❌'}"
-            ),
+                f"{key.capitalize()}: {val.get('score')} / {val.get('umbral')} {'✅' if val.get('cumple') else '❌'}"
+            )
+            for key, val in criterios.items()
         ]
-
-        ha_salido = result.get("haSalido", False)
-        if ha_salido:
+        if result.get("haSalido"):
             details_list.extend(
                 [
                     html.Li(html.Hr(), style={"listStyleType": "none"}),
                     html.Li("Ya ha salido en el histórico ❌"),
                 ]
             )
-
         return (
             {"display": "block"},
-            f"{card_class_base} {card_class_color}",
+            card_class,
             title,
-            combo_text,
+            f"Tu combinación: {result.get('combinacion', [])}",
             score_text,
             details_list,
             (combination if es_omega else None),
@@ -524,25 +624,13 @@ if __name__ == "__main__":
         )
 
     @app.callback(
-        [Output(f"num-input-{i}", "value", allow_duplicate=True) for i in range(6)]
-        + [Output("store-validated-omega", "data", allow_duplicate=True)]
-        + [Output("analysis-result-card", "style", allow_duplicate=True)],
-        Input("btn-clear-inputs", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def handle_clear_inputs(n_clicks):
-        if not fue_un_clic_real("btn-clear-inputs"):
-            return [no_update] * 8
-        return [None] * 6 + [None, {"display": "none"}]
-
-    @app.callback(
         Output("input-nombre", "disabled"),
         Output("input-movil", "disabled"),
         Output("btn-registrar", "disabled"),
         Input("store-validated-omega", "data"),
-        [Input(f"num-input-{i}", "value") for i in range(6)],
+        Input({"type": "num-input", "index": ALL}, "value"),
     )
-    def control_registration_fields(validated_omega, *current_inputs_tuple):
+    def control_registration_fields(validated_omega, current_inputs_tuple):
         try:
             current_inputs = sorted(
                 [int(i) for i in current_inputs_tuple if i is not None and i != ""]
@@ -551,32 +639,32 @@ if __name__ == "__main__":
             current_inputs = []
         if (
             validated_omega
-            and len(current_inputs) == 6
+            and len(current_inputs) == len(validated_omega)
             and sorted(validated_omega) == current_inputs
         ):
             return False, False, False
         return True, True, True
 
-    # --- Callbacks de Registro y Gestión ---
+    # --- CALLBACKS DE REGISTRO Y GESTIÓN ---
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-registrar", "n_clicks"),
-        [
-            State("store-validated-omega", "data"),
-            State("input-nombre", "value"),
-            State("input-movil", "value"),
-        ],
+        State("store-active-game", "data"),
+        State("store-validated-omega", "data"),
+        State("input-nombre", "value"),
+        State("input-movil", "value"),
         prevent_initial_call=True,
     )
-    def handle_register_omega(n_clicks, validated_omega, nombre, movil):
+    def handle_register_omega(n_clicks, game_id, validated_omega, nombre, movil):
         if not fue_un_clic_real("btn-registrar"):
             return no_update
-        from modules.database import register_omega_combination
+        from modules import database
 
+        game_config = config.get_game_config(game_id)
         if not validated_omega or not nombre or not movil:
             return dbc.Alert("Todos los campos son obligatorios.", color="warning")
-        success, message = register_omega_combination(
-            validated_omega, nombre.strip(), movil.strip()
+        success, message = database.register_omega_combination(
+            validated_omega, nombre.strip(), movil.strip(), game_config["paths"]["db"]
         )
         return dbc.Alert(
             message, color="success" if success else "danger", duration=5000
@@ -585,20 +673,23 @@ if __name__ == "__main__":
     @app.callback(
         Output("table-registros", "data"),
         Input("btn-refresh-registros", "n_clicks"),
-        Input("btn-nav-registros", "n_clicks"),
-        State("modal-confirm-delete", "is_open"),
+        Input("view-content", "children"),
+        State("store-active-game", "data"),
+        State("btn-nav-registros", "n_clicks"),
     )
-    def populate_registros_table(refresh_clicks, nav_clicks, is_modal_open):
-        if ctx.triggered_id in ["btn-refresh-registros", "btn-nav-registros"] or (
-            ctx.triggered_id == "modal-confirm-delete" and not is_modal_open
-        ):
-            from modules.database import get_all_registrations
+    def populate_registros_table(refresh_clicks, _, game_id, nav_clicks):
+        if (
+            ctx.triggered_id != "btn-refresh-registros"
+            and ctx.triggered_id != "view-content"
+        ) or not nav_clicks:
+            return no_update
+        from modules import database
 
-            df = get_all_registrations()
-            if not df.empty:
-                df["acciones"] = "🗑️"
-            return df.to_dict("records")
-        return no_update
+        game_config = config.get_game_config(game_id)
+        df = database.get_all_registrations(game_config["paths"]["db"])
+        if not df.empty:
+            df["acciones"] = "🗑️"
+        return df.to_dict("records")
 
     @app.callback(
         Output("modal-confirm-delete", "is_open"),
@@ -608,29 +699,39 @@ if __name__ == "__main__":
         prevent_initial_call=True,
     )
     def open_delete_modal(active_cell, data):
-        if active_cell and active_cell["column_id"] == "acciones":
+        if active_cell and data and active_cell["column_id"] == "acciones":
             return True, data[active_cell["row"]]["combinacion"]
         return False, no_update
 
     @app.callback(
         Output("modal-confirm-delete", "is_open", allow_duplicate=True),
         Output("notification-container", "children", allow_duplicate=True),
+        Output("btn-refresh-registros", "n_clicks"),
         Input("btn-confirm-delete", "n_clicks"),
         State("store-record-to-delete", "data"),
+        State("store-active-game", "data"),
         prevent_initial_call=True,
     )
-    def confirm_delete_record(n_clicks, combo_to_delete):
+    def confirm_delete_record(n_clicks, combo_to_delete, game_id):
+        refresh_trigger = ctx.inputs["btn-confirm-delete.n_clicks"]
         if not fue_un_clic_real("btn-confirm-delete"):
-            return no_update, no_update
-        from modules.database import delete_registration
+            return no_update, no_update, no_update
+        from modules import database
 
+        game_config = config.get_game_config(game_id)
         if not combo_to_delete:
-            return False, dbc.Alert(
-                "Error: No hay registro seleccionado.", color="danger"
+            return (
+                False,
+                dbc.Alert("Error: No hay registro seleccionado.", color="danger"),
+                no_update,
             )
-        success, message = delete_registration(combo_to_delete)
-        return False, dbc.Alert(
-            message, color="success" if success else "danger", duration=4000
+        success, message = database.delete_registration(
+            combo_to_delete, game_config["paths"]["db"]
+        )
+        return (
+            False,
+            dbc.Alert(message, color="success" if success else "danger", duration=4000),
+            refresh_trigger,
         )
 
     @app.callback(
@@ -639,21 +740,23 @@ if __name__ == "__main__":
         prevent_initial_call=True,
     )
     def cancel_delete(n_clicks):
-        if not fue_un_clic_real("btn-cancel-delete"):
-            return no_update
-        return False
+        return False if n_clicks else no_update
 
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Input("btn-export-registros", "n_clicks"),
+        State("store-active-game", "data"),
         prevent_initial_call=True,
     )
-    def handle_export_registros(n_clicks):
+    def handle_export_registros(n_clicks, game_id):
         if not fue_un_clic_real("btn-export-registros"):
             return no_update
-        from modules.database import export_registrations_to_json
+        from modules import database
 
-        success, message = export_registrations_to_json()
+        game_config = config.get_game_config(game_id)
+        success, message = database.export_registrations_to_json(
+            game_config["paths"]["db"], game_config["paths"]["backup"]
+        )
         return dbc.Alert(
             message, color="success" if success else "danger", duration=5000
         )
@@ -664,277 +767,326 @@ if __name__ == "__main__":
         prevent_initial_call=True,
     )
     def open_import_modal(n_clicks):
-        if fue_un_clic_real("btn-import-registros"):
-            return True
-        return False
+        return True if n_clicks else False
 
     @app.callback(
         Output("notification-container", "children", allow_duplicate=True),
         Output("modal-confirm-import", "is_open", allow_duplicate=True),
+        Output("btn-refresh-registros", "n_clicks", allow_duplicate=True),
         Input("btn-import-overwrite", "n_clicks"),
         Input("btn-import-no-overwrite", "n_clicks"),
+        State("store-active-game", "data"),
         prevent_initial_call=True,
     )
-    def handle_import_registros(overwrite_clicks, no_overwrite_clicks):
-        from modules.database import import_registrations_from_json
+    def handle_import_registros(overwrite_clicks, no_overwrite_clicks, game_id):
+        from modules import database
 
         trigger_id = ctx.triggered_id
         if trigger_id not in ["btn-import-overwrite", "btn-import-no-overwrite"]:
-            return no_update, no_update
-        overwrite = trigger_id == "btn-import-overwrite"
-        _, _, _, message = import_registrations_from_json(overwrite=overwrite)
-        return dbc.Alert(message, color="success", duration=8000), False
+            return no_update, no_update, no_update
 
-    # --- Callbacks de Visores ---
+        game_config = config.get_game_config(game_id)
+        overwrite = trigger_id == "btn-import-overwrite"
+        _, _, _, message = database.import_registrations_from_json(
+            game_config["paths"]["db"],
+            game_config["paths"]["backup"],
+            overwrite=overwrite,
+        )
+
+        refresh_trigger = (overwrite_clicks or 0) + (no_overwrite_clicks or 0)
+        return (
+            dbc.Alert(message, color="success", duration=8000),
+            False,
+            refresh_trigger,
+        )
+
+    # --- CALLBACKS DE VISORES Y GRÁFICOS ---
     @app.callback(
+        Output("table-historicos", "columns"),
         Output("table-historicos", "data"),
         Output("table-historicos", "style_data_conditional"),
         Input("btn-refresh-historicos", "n_clicks"),
-        Input("btn-nav-historicos", "n_clicks"),
+        Input("view-content", "children"),
+        State("store-active-game", "data"),
+        State("btn-nav-historicos", "n_clicks"),
     )
-    def populate_historicos_table(refresh_clicks, nav_clicks):
-        if ctx.triggered_id in ["btn-refresh-historicos", "btn-nav-historicos"]:
-            from modules.database import read_historico_from_db
+    def populate_historicos_table(refresh_clicks, _, game_id, nav_clicks):
+        if (
+            ctx.triggered_id != "btn-refresh-historicos"
+            and ctx.triggered_id != "view-content"
+        ) or not nav_clicks:
+            return no_update, no_update, no_update
+        from modules import database
 
-            df = read_historico_from_db()
-            if df.empty:
-                return [], []
-            df["es_omega_str"] = df["es_omega"].apply(
-                lambda x: "Sí" if x == 1 else "No"
-            )
-            df["fecha"] = pd.to_datetime(df["fecha"]).dt.strftime("%d/%m/%Y")
-            df["analizar"] = "[🔍]"
-            df["id"] = df["concurso"]
-
-            styles = [
+        game_config = config.get_game_config(game_id)
+        df = database.read_historico_from_db(game_config["paths"]["db"])
+        if df.empty:
+            return [], [], []
+        result_cols = [
+            {"name": f"R{i}", "id": f"r{i}"} for i in range(1, game_config["n"] + 1)
+        ]
+        base_cols = [
+            {"name": "Concurso", "id": "concurso"},
+            {"name": "Fecha", "id": "fecha"},
+        ]
+        bolsa_cols = (
+            [
                 {
-                    "if": {"filter_query": "{bolsa_ganada} = 1"},
+                    "name": "Bolsa",
+                    "id": "bolsa",
+                    "type": "numeric",
+                    "format": {"specifier": "$,.0f"},
+                }
+            ]
+            if "bolsa" in df.columns and df["bolsa"].sum() > 0
+            else []
+        )
+        omega_cols = [
+            {"name": "Clase Omega", "id": "es_omega_str"},
+            {
+                "name": "Omega Score",
+                "id": "omega_score",
+                "type": "numeric",
+                "format": {"specifier": ".4f"},
+            },
+            {"name": "Af. Cuartetos", "id": "afinidad_cuartetos"},
+            {"name": "Af. Tercias", "id": "afinidad_tercias"},
+            {"name": "Af. Pares", "id": "afinidad_pares"},
+            {"name": "Analizar", "id": "analizar", "presentation": "markdown"},
+        ]
+        columns = base_cols + result_cols + bolsa_cols + omega_cols
+        df["es_omega_str"] = df.get("es_omega", pd.Series(0)).apply(
+            lambda x: "Sí" if x == 1 else "No"
+        )
+        df["fecha"] = pd.to_datetime(df["fecha"]).dt.strftime("%d/%m/%Y")
+        df["analizar"] = "[🔍]"
+        df["id"] = df["concurso"]
+        styles = [
+            {
+                "if": {
+                    "column_id": "es_omega_str",
+                    "filter_query": '{es_omega_str} = "Sí"',
+                },
+                "backgroundColor": "#d4edda",
+                "color": "#155724",
+            },
+            {
+                "if": {
+                    "column_id": "es_omega_str",
+                    "filter_query": '{es_omega_str} = "No"',
+                },
+                "backgroundColor": "#f8d7da",
+                "color": "#721c24",
+            },
+        ]
+        if "es_ganador" in df.columns:
+            styles.append(
+                {
+                    "if": {"filter_query": "{es_ganador} = 1"},
                     "backgroundColor": "#155724",
                     "color": "white",
                     "fontWeight": "bold",
-                },
-                {
-                    "if": {
-                        "column_id": "es_omega_str",
-                        "filter_query": '{es_omega_str} = "Sí"',
-                    },
-                    "backgroundColor": "#d4edda",
-                    "color": "#155724",
-                },
-                {
-                    "if": {
-                        "column_id": "es_omega_str",
-                        "filter_query": '{es_omega_str} = "No"',
-                    },
-                    "backgroundColor": "#f8d7da",
-                    "color": "#721c24",
-                },
-            ]
-
-            if "es_ganador" in df.columns:
-                df.rename(columns={"es_ganador": "bolsa_ganada"}, inplace=True)
-
-            return df.to_dict("records"), styles
-        return no_update, no_update
+                }
+            )
+        return columns, df.to_dict("records"), styles
 
     @app.callback(
-        Output("modal-deconstructor", "is_open"),
-        Output("modal-deconstructor-header", "children"),
-        Output("summary-cuartetos", "children"),
-        Output("summary-tercias", "children"),
-        Output("summary-pares", "children"),
-        Output("table-cuartetos", "data"),
-        Output("table-tercias", "data"),
-        Output("table-pares", "data"),
-        Input("table-historicos", "active_cell"),
-        State("table-historicos", "data"),
+        Output("graph-universo", "figure"),
+        Output("graph-historico", "figure"),
+        Output("graph-ganadores", "figure"),
+        Output("graph-scatter-score-bolsa", "figure"),
+        Output("graph-score-historico-dist", "figure"),
+        Output("graph-score-omega-class-dist", "figure"),
+        Output("graph-omega-score-trajectory", "figure"),  # <-- Nuevo Output
+        Input("btn-refresh-graficos", "n_clicks"),
+        State("store-active-game", "data"),
         prevent_initial_call=True,
     )
-    def open_and_populate_deconstructor_modal(active_cell, table_data):
-        if not active_cell or active_cell["column_id"] != "analizar" or not table_data:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
+    def update_all_graphs(n_clicks, game_id):
+        if not fue_un_clic_real("btn-refresh-graficos"):
+            return (no_update,) * 7  # <-- Actualizado a 7
+        from modules import database, omega_logic
 
-        from modules.omega_logic import deconstruct_affinity
+        game_config = config.get_game_config(game_id)
 
-        row_id = active_cell.get("row_id")
-        if not row_id:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
-
-        row_data = next((item for item in table_data if item["id"] == row_id), None)
-        if not row_data:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
-
-        combination = [row_data[f"r{i}"] for i in range(1, 7)]
-        omega_score = row_data.get("omega_score", 0.0)
-
-        data = deconstruct_affinity(combination, omega_score)
-
-        if data.get("error"):
-            # Optionally, display an alert to the user
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
-
-        header = f"Combinación: {data['combination']} | Omega Score: {data['omega_score']:.4f}"
-        summary_q = f"Afinidad Total de Cuartetos: {data['totals']['cuartetos']}"
-        summary_t = f"Afinidad Total de Tercias: {data['totals']['tercias']}"
-        summary_p = f"Afinidad Total de Pares: {data['totals']['pares']}"
-
-        table_q_data = data["breakdown"]["cuartetos"]
-        table_t_data = data["breakdown"]["tercias"]
-        table_p_data = data["breakdown"]["pares"]
-
-        return (
-            True,
-            header,
-            summary_q,
-            summary_t,
-            summary_p,
-            table_q_data,
-            table_t_data,
-            table_p_data,
+        empty_fig = go.Figure().update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
         )
 
-    @app.callback(
-        Output("modal-deconstructor", "is_open", allow_duplicate=True),
-        Input("btn-close-modal", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def close_deconstructor_modal(n_clicks):
-        if n_clicks > 0:
-            return False
-        return no_update
+        # Gráfico 1: Trayectoria de Omega Scores (Tu idea)
+        df_trajectory = database.read_omega_score_trajectory(game_config["paths"]["db"])
+        fig_trajectory = go.Figure()
+        if not df_trajectory.empty:
+            fig_trajectory.add_trace(
+                go.Scatter(
+                    x=df_trajectory["concurso"],
+                    y=df_trajectory["original_omega_score"],
+                    mode="lines",
+                    name="Score Original (al nacer)",
+                    line=dict(color="rgba(255, 100, 100, 0.6)"),
+                )
+            )
+            fig_trajectory.add_trace(
+                go.Scatter(
+                    x=df_trajectory["concurso"],
+                    y=df_trajectory["current_omega_score"],
+                    mode="lines",
+                    name="Score Actual (actualizado)",
+                    line=dict(color="rgba(100, 100, 255, 0.8)"),
+                )
+            )
+            
+            fig_trajectory.update_layout(
+                title_x=0.5, 
+                template='simple_white', 
+                xaxis_title='Sorteo', 
+                yaxis_title='Omega Score',
+                # Añadimos la línea horizontal en y=0
+                shapes=[
+                    dict(
+                        type='line',
+                        y0=0, y1=0, # Coordenadas Y de la línea
+                        x0=df_trajectory['concurso'].min(), x1=df_trajectory['concurso'].max(), # Coordenadas X
+                        line=dict(color='Black', width=1, dash='dot')
+                    )
+                ]
+            )
 
-    @app.callback(
-        [
-            Output('graph-universo', 'figure'), 
-            Output('graph-historico', 'figure'), 
-            Output('graph-ganadores', 'figure'), 
-            Output('graph-scatter-score-bolsa', 'figure'),
-            Output('graph-score-historico-dist', 'figure'), # <-- Nuevo Output
-            Output('graph-score-omega-class-dist', 'figure'), # <-- Nuevo Output
-            Output('notification-container', 'children', allow_duplicate=True), 
-        ],
-        Input('btn-refresh-graficos', 'n_clicks'), 
-        prevent_initial_call=True
-    )
-    def update_all_graphs(n_clicks):
-        # --- CORRECCIÓN 1: Devolver siempre el número correcto de outputs ---
-        if not fue_un_clic_real('btn-refresh-graficos'):
-            return no_update, no_update, no_update, no_update, no_update, no_update, no_update
 
-        from modules.database import read_historico_from_db, count_omega_class, get_omega_class_scores
-        from modules.omega_logic import C
-        import plotly.express as px
-        import plotly.graph_objects as go
-        
-        empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        else:
+            fig_trajectory.update_layout(
+                title_text=f"Trayectoria de Scores<br>({game_config['display_name']})<br>(No generada)",
+                title_x=0.5,
+            )
 
         # Gráficos de Donut
-        total_omega_class = count_omega_class()
-        if not isinstance(total_omega_class, (int, float, np.integer)):
-            return empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Error de tipo.", color="danger")
-        total_omega_class_int = int(total_omega_class)
-        if total_omega_class_int == 0:
-            return empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Clase Omega no generada.", color="warning")
-        
-        fig_universo = create_donut_chart([total_omega_class_int, C(39, 6) - total_omega_class_int],["Clase Omega", "Otras"],"Universo",)
-        
-        df_historico = read_historico_from_db()
-        if df_historico.empty:
-            return fig_universo, empty_fig, empty_fig, empty_fig, empty_fig, empty_fig, dbc.Alert("Histórico vacío.", color="warning")
-        
-        # --- CORRECCIÓN 2: Crear la columna 'es_omega_str' aquí también ---
-        df_historico["es_omega_str"] = df_historico["es_omega"].apply(lambda x: "Sí" if x == 1 else "No")
-
-        historico_counts = df_historico["es_omega"].value_counts()
-        fig_historico = create_donut_chart([historico_counts.get(1, 0), historico_counts.get(0, 0)],["Omega", "No Omega"],"Sorteos Históricos",)
-        
-        df_ganadores = df_historico[df_historico["es_ganador"] == 1].copy()
-        ganadores_counts = df_ganadores["es_omega"].value_counts()
-        fig_ganadores = create_donut_chart([ganadores_counts.get(1, 0), ganadores_counts.get(0, 0)],["Omega", "No Omega"],"Sorteos con Premio",)
-
-        # Gráfico de Dispersión
-        df_scatter = df_ganadores
-        if df_scatter.empty:
-            fig_scatter = empty_fig.update_layout(title_text="No hay sorteos con premio mayor")
-        else:
-            df_scatter["Clase"] = df_scatter["es_omega"].apply(lambda x: "Omega" if x == 1 else "No Omega")
-            df_scatter["combinacion_str"] = (df_scatter[["r1", "r2", "r3", "r4", "r5", "r6"]].astype(str).agg("-".join, axis=1))
-
-            fig_scatter = px.scatter(
-                df_scatter, x="omega_score", y="bolsa_ganada", color="Clase",
-                color_discrete_map={"Omega": "#3b71ca", "No Omega": "#dc3545"}, template="simple_white",
-                title="Comparativa de Sorteos con Premio Mayor",
-                labels={"omega_score": "Omega Score","bolsa_ganada": "Bolsa Ganada (MXN)"},
-                hover_data=["concurso", "fecha", "combinacion_str"],
-            )
-            fig_scatter.update_layout(title_x=0.5, legend_title_text="", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            fig_scatter.update_traces(marker=dict(size=10, opacity=0.7, line=dict(width=1, color="DarkSlateGrey")))
-
-        # Histograma de Omega Score en TODO el histórico
-        fig_score_historico = px.histogram(
-            df_historico, x="omega_score", color="es_omega_str",
-            color_discrete_map={'Sí': '#3b71ca', 'No': '#adb5bd'},
-            labels={"omega_score": "Omega Score", "es_omega_str": "Clase"},
-            template='simple_white'
+        total_omega = database.count_omega_class(game_config["paths"]["db"])
+        fig_universo = create_donut_chart(
+            [total_omega, game_config["total_combinations"] - total_omega],
+            ["Omega", "Otras"],
+            "Universo",
+            game_config["display_name"],
         )
-        fig_score_historico.update_layout(title_x=0.5, yaxis_title="Cantidad de Sorteos", legend_title_text='Pertenece a Clase Omega')
 
-        # Histograma de Omega Score en TODA la Clase Omega teórica
-        df_omega_class = get_omega_class_scores()
-        if df_omega_class.empty:
-            fig_score_omega_class = empty_fig.update_layout(title_text="Clase Omega no ha sido pre-generada")
-        else:
-            s_q = ((df_omega_class['afinidad_cuartetos'] - config.UMBRAL_CUARTETOS) / config.UMBRAL_CUARTETOS) * 0.5
-            s_t = ((df_omega_class['afinidad_tercias'] - config.UMBRAL_TERCIAS) / config.UMBRAL_TERCIAS) * 0.3
-            s_p = ((df_omega_class['afinidad_pares'] - config.UMBRAL_PARES) / config.UMBRAL_PARES) * 0.2
-            df_omega_class['omega_score'] = s_q + s_t + s_p
-            
-            fig_score_omega_class = px.histogram(
-                df_omega_class, x="omega_score",
-                labels={"omega_score": "Omega Score"},
-                template='simple_white',
-                color_discrete_sequence=['#3b71ca']
+        df_historico = database.read_historico_from_db(game_config["paths"]["db"])
+        if df_historico.empty:
+            return (
+                fig_universo,
+                empty_fig,
+                empty_fig,
+                empty_fig,
+                empty_fig,
+                empty_fig,
+                fig_trajectory,
             )
-            fig_score_omega_class.update_layout(title_x=0.5, yaxis_title="Cantidad de Combinaciones Teóricas")
-            
-        return fig_universo, fig_historico, fig_ganadores, fig_scatter, fig_score_historico, fig_score_omega_class, None
 
+        # ... (el resto de la lógica de gráficos se mantiene igual)
+        historico_counts = df_historico.get(
+            "es_omega", pd.Series(dtype=int)
+        ).value_counts()
+        fig_historico = create_donut_chart(
+            [historico_counts.get(1, 0), historico_counts.get(0, 0)],
+            ["Omega", "No Omega"],
+            "Históricos",
+            game_config["display_name"],
+        )
+        fig_ganadores, fig_scatter = go.Figure(), go.Figure()
+        if (
+            "es_ganador" in df_historico.columns
+            and df_historico["es_ganador"].sum() > 0
+        ):
+            df_ganadores = df_historico[df_historico["es_ganador"] == 1].copy()
+            ganadores_counts = df_ganadores["es_omega"].value_counts()
+            fig_ganadores = create_donut_chart(
+                [ganadores_counts.get(1, 0), ganadores_counts.get(0, 0)],
+                ["Omega", "No Omega"],
+                "Sorteos con Premio",
+                game_config["display_name"],
+            )
+            df_ganadores["combinacion_str"] = (
+                df_ganadores[game_config["data_source"]["result_columns"]]
+                .astype(str)
+                .agg("-".join, axis=1)
+            )
+            fig_scatter = px.scatter(
+                df_ganadores,
+                x="omega_score",
+                y="bolsa_ganada",
+                color="omega_score",
+                template="simple_white",
+                title="Omega Score vs. Bolsa Ganada",
+                labels={
+                    "omega_score": "Omega Score",
+                    "bolsa_ganada": "Bolsa Ganada (MXN)",
+                    "color": "Omega Score",
+                },
+                hover_data=["concurso", "fecha", "combinacion_str"],
+                color_continuous_scale=px.colors.sequential.Viridis,
+            )
+            fig_scatter.update_layout(title_x=0.5)
+        else:
+            fig_ganadores.update_layout(
+                title_text=f"Sorteos con Premio<br>({game_config['display_name']})<br>(No aplicable)",
+                title_x=0.5,
+            )
+            fig_scatter.update_layout(
+                title_text=f"Omega Score vs. Bolsa<br>({game_config['display_name']})<br>(No aplicable)",
+                title_x=0.5,
+            )
+        df_historico["es_omega_str"] = df_historico.get("es_omega", pd.Series(0)).apply(
+            lambda x: "Sí" if x == 1 else "No"
+        )
+        fig_score_historico = px.histogram(
+            df_historico,
+            x="omega_score",
+            color="es_omega_str",
+            template="simple_white",
+            title="Distribución Omega Score (Histórico)",
+        )
+        df_omega_class = database.get_omega_class_scores(game_config["paths"]["db"])
+        fig_score_omega_class = go.Figure()
+        if not df_omega_class.empty:
+            loaded_thresholds = omega_logic.get_loaded_thresholds(game_config)
+            weights, thresholds = (
+                game_config["omega_config"]["score_weights"],
+                loaded_thresholds,
+            )
+            s_q = (
+                (df_omega_class["afinidad_cuartetos"] - thresholds.get("cuartetos", 0))
+                / (thresholds.get("cuartetos", 1) or 1)
+            ) * weights.get("cuartetos", 0)
+            s_t = (
+                (df_omega_class["afinidad_tercias"] - thresholds.get("tercias", 0))
+                / (thresholds.get("tercias", 1) or 1)
+            ) * weights.get("tercias", 0)
+            s_p = (
+                (df_omega_class["afinidad_pares"] - thresholds.get("pares", 0))
+                / (thresholds.get("pares", 1) or 1)
+            ) * weights.get("pares", 0)
+            df_omega_class["omega_score"] = s_q + s_t + s_p
+            fig_score_omega_class = px.histogram(
+                df_omega_class,
+                x="omega_score",
+                template="simple_white",
+                title="Distribución Omega Score (Clase Omega)",
+            )
+        else:
+            fig_score_omega_class.update_layout(
+                title_text=f"Distribución Score (Clase Omega)<br>({game_config['display_name']})<br>(No generada)",
+                title_x=0.5,
+            )
+
+        return (
+            fig_universo,
+            fig_historico,
+            fig_ganadores,
+            fig_scatter,
+            fig_score_historico,
+            fig_score_omega_class,
+            fig_trajectory,
+        )
+
+    # --- CALLBACK DE LA PESTAÑA DE MONITOREO ---
     @app.callback(
         Output("collapse-dist-panel", "is_open"),
         Input("btn-collapse-dist", "n_clicks"),
@@ -946,74 +1098,47 @@ if __name__ == "__main__":
             return not is_open
         return is_open
 
-    # --- Reemplaza el callback de monitoreo existente con esta versión completa ---
     @app.callback(
-        [
-            Output("graph-freq-dist-trajectory", "figure"),
-            Output("graph-affinity-trajectory", "figure"),
-            Output("graph-freq-trajectory", "figure"),
-            Output("graph-threshold-trajectory", "figure"),
-            Output("graph-freq-histogram", "figure"),
-            Output("graph-affinity-histogram", "figure"),
-        ],
-        [
-            Input("btn-refresh-monitoring", "n_clicks"),
-            Input("btn-nav-monitoreo", "n_clicks"),
-        ],
+        Output("graph-freq-dist-trajectory", "figure"),
+        Output("graph-affinity-trajectory", "figure"),
+        Output("graph-freq-trajectory", "figure"),
+        Output("graph-threshold-trajectory", "figure"),
+        Output("graph-freq-histogram", "figure"),
+        Output("graph-affinity-histogram", "figure"),
+        Input("btn-refresh-monitoring", "n_clicks"),
+        State("store-active-game", "data"),
+        prevent_initial_call=True,
     )
-    def update_monitoring_graphs(refresh_clicks, nav_clicks):
-        if not ctx.triggered_id:
-            return no_update, no_update, no_update, no_update, no_update, no_update
-
-        from modules.database import (
-            read_historico_from_db,
-            read_freq_dist_trajectory_data,
-            read_affinity_trajectory_data,
-            read_freq_trajectory_data,
-            read_trajectory_data,
-        )
-        from modules.omega_logic import C, get_frequencies
+    def update_monitoring_graphs(n_clicks, game_id):
+        if not fue_un_clic_real("btn-refresh-monitoring"):
+            return (no_update,) * 6
+        from modules import database, omega_logic
         from plotly.subplots import make_subplots
-        import pandas as pd
-        import plotly.express as px
-        import plotly.graph_objects as go
-        import config # Importar el config para acceder a los esquemas
 
-        df_freq_dist = read_freq_dist_trajectory_data()
-        df_affinity = read_affinity_trajectory_data()
-        df_freq = read_freq_trajectory_data()
-        df_threshold = read_trajectory_data()
-
+        game_config = config.get_game_config(game_id)
+        db_path = game_config["paths"]["db"]
+        df_freq_dist = database.read_trajectory_data(db_path, "freq_dist_trayectoria")
+        df_affinity = database.read_trajectory_data(db_path, "afinidades_trayectoria")
+        df_freq_count = database.read_trajectory_data(
+            db_path, "frecuencias_trayectoria"
+        )
+        df_threshold = database.read_trajectory_data(db_path, "umbrales_trayectoria")
         empty_fig = go.Figure().update_layout(
             title_text="No hay datos. Ejecute 'generate_trajectory.py'",
             title_x=0.5,
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
-
-        # 1. Gráfico de DISTRIBUCIÓN DE FRECUENCIAS
-        if df_freq_dist.empty:
-            fig_freq_dist = empty_fig
-        else:
+        fig_freq_dist = empty_fig
+        if not df_freq_dist.empty:
             fig_freq_dist = make_subplots(
                 rows=3,
                 cols=1,
                 shared_xaxes=True,
-                subplot_titles=(
-                    "Frecuencia de Cuartetos",
-                    "Frecuencia de Tercias",
-                    "Frecuencia de Pares",
-                ),
+                subplot_titles=("Cuartetos", "Tercias", "Pares"),
             )
-            levels = [("cuartetos", 1), ("tercias", 2), ("pares", 3)]
-            colors = {"media": "#d62728", "rango": "rgba(214,39,40,0.2)"}
-            shapes = []
-
-            for level, row in levels:
-                df_freq_dist[f"freq_{level}_max"] = df_freq_dist[
-                    f"freq_{level}_max"
-                ].cummax()
-
+            for i, level in enumerate(["cuartetos", "tercias", "pares"]):
+                row = i + 1
                 fig_freq_dist.add_trace(
                     go.Scatter(
                         x=df_freq_dist["ultimo_concurso_usado"],
@@ -1021,7 +1146,6 @@ if __name__ == "__main__":
                         mode="lines",
                         line=dict(width=0),
                         showlegend=False,
-                        hoverinfo="skip",
                     ),
                     row=row,
                     col=1,
@@ -1033,9 +1157,7 @@ if __name__ == "__main__":
                         mode="lines",
                         line=dict(width=0),
                         fill="tonexty",
-                        fillcolor=colors["rango"],
-                        name="Rango (Min-Max)",
-                        hoverinfo="skip",
+                        fillcolor="rgba(214,39,40,0.2)",
                     ),
                     row=row,
                     col=1,
@@ -1045,48 +1167,25 @@ if __name__ == "__main__":
                         x=df_freq_dist["ultimo_concurso_usado"],
                         y=df_freq_dist[f"freq_{level}_media"],
                         mode="lines",
-                        line=dict(color=colors["media"], width=2),
+                        line=dict(color="#d62728", width=2),
                         name="Media",
                     ),
                     row=row,
                     col=1,
                 )
-
-                max_val = df_freq_dist[f"freq_{level}_max"].max()
-                shapes.append(
-                    dict(
-                        type="line",
-                        xref="paper",
-                        yref=f"y{row}",
-                        x0=0,
-                        y0=max_val,
-                        x1=1,
-                        y1=max_val,
-                        line=dict(color="grey", width=1, dash="dot"),
-                    )
-                )
-
             fig_freq_dist.update_layout(
-                height=700, template="simple_white", showlegend=False, shapes=shapes
+                height=700, template="simple_white", showlegend=False
             )
-
-        # 2. Gráfico de AFINIDADES
-        if df_affinity.empty:
-            fig_affinity = empty_fig
-        else:
+        fig_affinity = empty_fig
+        if not df_affinity.empty:
             fig_affinity = make_subplots(
                 rows=3,
                 cols=1,
                 shared_xaxes=True,
-                subplot_titles=(
-                    "Afinidad de Cuartetos",
-                    "Afinidad de Tercias",
-                    "Afinidad de Pares",
-                ),
+                subplot_titles=("Cuartetos", "Tercias", "Pares"),
             )
-            levels = [("cuartetos", 1), ("tercias", 2), ("pares", 3)]
-            colors_affinity = {"media": "#1f77b4", "rango": "rgba(31,119,180,0.2)"}
-            for level, row in levels:
+            for i, level in enumerate(["cuartetos", "tercias", "pares"]):
+                row = i + 1
                 fig_affinity.add_trace(
                     go.Scatter(
                         x=df_affinity["ultimo_concurso_usado"],
@@ -1094,7 +1193,6 @@ if __name__ == "__main__":
                         mode="lines",
                         line=dict(width=0),
                         showlegend=False,
-                        hoverinfo="skip",
                     ),
                     row=row,
                     col=1,
@@ -1106,9 +1204,7 @@ if __name__ == "__main__":
                         mode="lines",
                         line=dict(width=0),
                         fill="tonexty",
-                        fillcolor=colors_affinity["rango"],
-                        name="Rango (Min-Max)",
-                        hoverinfo="skip",
+                        fillcolor="rgba(31,119,180,0.2)",
                     ),
                     row=row,
                     col=1,
@@ -1118,8 +1214,7 @@ if __name__ == "__main__":
                         x=df_affinity["ultimo_concurso_usado"],
                         y=df_affinity[f"afin_{level}_media"],
                         mode="lines",
-                        line=dict(color=colors_affinity["media"], width=2),
-                        name="Media",
+                        line=dict(color="#1f77b4", width=2),
                     ),
                     row=row,
                     col=1,
@@ -1127,84 +1222,39 @@ if __name__ == "__main__":
             fig_affinity.update_layout(
                 height=700, template="simple_white", showlegend=False
             )
-
-        # 3. Gráfico de CONTEO de Frecuencias
-        if df_freq.empty:
-            fig_freq_count = empty_fig
-        else:
-            # Definir máximos teóricos
-            MAX_PARES = C(39, 2)
-            MAX_TERCIAS = C(39, 3)
-            MAX_CUARTETOS = C(39, 4)
-            
-            # Definir mapa de colores
-            color_map = {
-                'Pares': px.colors.qualitative.Plotly[0],
-                'Tercias': px.colors.qualitative.Plotly[1],
-                'Cuartetos': px.colors.qualitative.Plotly[2]
-            }
-            
-            # Crear subplots
-            fig_freq_count = make_subplots(
-                rows=2, cols=1, shared_xaxes=True, 
-                subplot_titles=('Conteo Absoluto de Combinaciones Únicas', 'Porcentaje del Universo Descubierto (%)'),
-                vertical_spacing=0.1
+        fig_freq_growth = empty_fig
+        if not df_freq_count.empty:
+            fig_freq_growth = px.line(
+                df_freq_count,
+                x="ultimo_concurso_usado",
+                y=[
+                    "total_pares_unicos",
+                    "total_tercias_unicas",
+                    "total_cuartetos_unicos",
+                ],
+                template="simple_white",
+                labels={
+                    "value": "Conteo Único",
+                    "ultimo_concurso_usado": "Sorteo Histórico",
+                },
             )
-
-            # --- ARQUITECTURA: Leer nombres de columnas desde config.py ---
-            schema_keys = list(config.FRECUENCIAS_TRAYECTORIA_SCHEMA.keys())
-            key_concurso = schema_keys[0]
-            key_pares = schema_keys[1]
-            key_tercias = schema_keys[3]
-            key_cuartetos = schema_keys[5]
-            
-            # Lógica tolerante por si alguna columna faltara (aunque no debería con la nueva arquitectura)
-            if key_pares in df_freq.columns:
-                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=df_freq[key_pares], name='Pares', line=dict(color=color_map['Pares'])), row=1, col=1)
-                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=(df_freq[key_pares] / MAX_PARES) * 100, name='Pares (%)', showlegend=False, line=dict(color=color_map['Pares'])), row=2, col=1)
-
-            if key_tercias in df_freq.columns:
-                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=df_freq[key_tercias], name='Tercias', line=dict(color=color_map['Tercias'])), row=1, col=1)
-                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=(df_freq[key_tercias] / MAX_TERCIAS) * 100, name='Tercias (%)', showlegend=False, line=dict(color=color_map['Tercias'])), row=2, col=1)
-            
-            if key_cuartetos in df_freq.columns:
-                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=df_freq[key_cuartetos], name='Cuartetos', line=dict(color=color_map['Cuartetos'])), row=1, col=1)
-                fig_freq_count.add_trace(go.Scatter(x=df_freq[key_concurso], y=(df_freq[key_cuartetos] / MAX_CUARTETOS) * 100, name='Cuartetos (%)', showlegend=False, line=dict(color=color_map['Cuartetos'])), row=2, col=1)
-            
-            fig_freq_count.update_layout(
-                height=600, template='simple_white', legend_title_text='Nivel',
-                annotations=[
-                    go.layout.Annotation(
-                        text=f"Máximos Teóricos:<br>Pares: {MAX_PARES}<br>Tercias: {MAX_TERCIAS:,}<br>Cuartetos: {MAX_CUARTETOS:,}",
-                        align='left', showarrow=False, xref='paper', yref='paper', x=1.05, y=1
-                    )
-                ]
-            )
-            fig_freq_count.update_yaxes(title_text='Conteo Absoluto', row=1, col=1)
-            fig_freq_count.update_yaxes(title_text='% Descubierto', row=2, col=1, range=[0, 101])
-            fig_freq_count.update_xaxes(title_text='Sorteo Histórico', row=2, col=1)
-
-        # 4. Gráfico de UMBRALES
-        if df_threshold.empty:
-            fig_threshold = empty_fig
-        else:
+            fig_freq_growth.update_layout(legend_title_text="Nivel")
+        fig_threshold = empty_fig
+        if not df_threshold.empty:
             fig_threshold = px.line(
                 df_threshold,
                 x="ultimo_concurso_usado",
                 y=["umbral_pares", "umbral_tercias", "umbral_cuartetos"],
                 template="simple_white",
                 labels={
-                    "ultimo_concurso_usado": "Sorteo Histórico",
                     "value": "Valor del Umbral",
+                    "ultimo_concurso_usado": "Sorteo Histórico",
                 },
             )
             fig_threshold.update_layout(legend_title_text="Afinidad")
-
-        # 5. Gráfico de HISTOGRAMA DE FRECUENCIAS
-        final_freqs = get_frequencies()
-        if not final_freqs:
-            fig_histogram = empty_fig
-        else:
+        fig_freq_hist = empty_fig
+        final_freqs = omega_logic.get_frequencies(game_config)
+        if final_freqs:
             hist_data = []
             for level in ["pares", "tercias", "cuartetos"]:
                 if final_freqs.get(level):
@@ -1212,40 +1262,20 @@ if __name__ == "__main__":
                         hist_data.append(
                             {"Frecuencia": value, "Nivel": level.capitalize()}
                         )
-
-            if not hist_data:
-                fig_histogram = empty_fig
-            else:
+            if hist_data:
                 df_hist = pd.DataFrame(hist_data)
-
-                fig_histogram = px.histogram(
+                fig_freq_hist = px.histogram(
                     df_hist,
                     x="Frecuencia",
                     color="Nivel",
                     barmode="overlay",
                     histnorm="percent",
-                    labels={
-                        "Frecuencia": "Veces que ha aparecido una combinación",
-                        "percent": "Porcentaje de Combinaciones",
-                    },
                     template="simple_white",
                 )
-                fig_histogram.update_traces(opacity=0.75)
-                fig_histogram.update_layout(legend_title_text="Nivel")
-                if "Pares" in df_hist["Nivel"].unique():
-                    x_range_limit = df_hist[df_hist["Nivel"] == "Pares"][
-                        "Frecuencia"
-                    ].quantile(0.99)
-                    fig_histogram.update_xaxes(range=[0, x_range_limit])
-
-        # 6. Gráfico de HISTOGRAMA DE AFINIDADES
-        df_historico = read_historico_from_db()
-        if df_historico.empty or not all(
-            col in df_historico.columns
-            for col in ["afinidad_pares", "afinidad_tercias", "afinidad_cuartetos"]
-        ):
-            fig_affinity_hist = empty_fig
-        else:
+                fig_freq_hist.update_traces(opacity=0.75)
+        fig_affinity_hist = empty_fig
+        df_historico = database.read_historico_from_db(db_path)
+        if not df_historico.empty and "afinidad_pares" in df_historico.columns:
             affinity_data = []
             for level in ["pares", "tercias", "cuartetos"]:
                 for value in df_historico[f"afinidad_{level}"]:
@@ -1253,591 +1283,28 @@ if __name__ == "__main__":
                         {"Afinidad": value, "Nivel": level.capitalize()}
                     )
             df_aff_hist = pd.DataFrame(affinity_data)
-
             fig_affinity_hist = px.histogram(
                 df_aff_hist,
                 x="Afinidad",
                 color="Nivel",
                 barmode="overlay",
                 histnorm="percent",
-                labels={
-                    "Afinidad": "Valor de Afinidad en Sorteos Históricos",
-                    "percent": "Porcentaje de Sorteos",
-                },
                 template="simple_white",
             )
             fig_affinity_hist.update_traces(opacity=0.75)
-            fig_affinity_hist.update_layout(legend_title_text="Nivel")
-
         return (
             fig_freq_dist,
             fig_affinity,
-            fig_freq_count,
+            fig_freq_growth,
             fig_threshold,
-            fig_histogram,
+            fig_freq_hist,
             fig_affinity_hist,
         )
 
-    # 5. INICIAR EL SERVIDOR
+    # --- INICIAR SERVIDOR ---
     def open_browser():
         webbrowser.open_new_tab("http://127.0.0.1:8050")
 
-    import os
-
     if os.environ.get("DOCKER_ENV") is None:
         Timer(2, open_browser).start()
-
     app.run(debug=False, host="0.0.0.0", port="8050")
-
-# --- START OF FILE presentation.py ---
-
-import dash_bootstrap_components as dbc
-from dash import html, dcc, dash_table
-import plotly.graph_objects as go
-import config
-
-
-def create_header():
-    return html.Div(
-        [
-            html.H1("Zen Lotto", className="text-center text-dark mb-2"),
-            html.P(
-                "Plataforma de Análisis para Lotería Melate Retro",
-                className="text-center text-muted",
-            ),
-        ],
-        className="mb-5",
-    )
-
-
-def create_navigation():
-    buttons = [
-        dbc.Button("GENERADOR OMEGA", id="btn-nav-generador", className="nav-button"),
-        dbc.Button("GRÁFICOS", id="btn-nav-graficos", className="nav-button"),
-        dbc.Button("VISOR HISTÓRICOS", id="btn-nav-historicos", className="nav-button"),
-        dbc.Button(
-            "REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"
-        ),
-        dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
-    ]
-
-    # Si el modo depuración está activo, insertamos el botón de Monitoreo
-    if config.DEBUG_MODE:
-        buttons.insert(
-            3, dbc.Button("MONITOREO", id="btn-nav-monitoreo", className="nav-button")
-        )
-
-    return dbc.Row(
-        dbc.Col(
-            html.Div(
-                dbc.ButtonGroup(buttons, id="navigation-group"),
-                className="nav-pill-container",
-            ),
-            width="auto",
-        ),
-        justify="center",
-        className="mb-5",
-    )
-
-
-def create_generador_view():
-    number_inputs = [
-        dbc.Col(
-            dcc.Input(id=f"num-input-{i}", type="number", className="number-box"),
-            width="auto",
-        )
-        for i in range(6)
-    ]
-    clear_button = dbc.Col(
-        dbc.Button(
-            html.I(className="fas fa-trash-alt"),
-            id="btn-clear-inputs",
-            color="secondary",
-            outline=True,
-            className="ms-2",
-        ),
-        width="auto",
-        className="d-flex align-items-center",
-    )
-
-    analysis_result_card = dbc.Card(
-        dbc.CardBody(
-            [
-                html.H4(id="analysis-title", className="card-title"),
-                html.P(id="analysis-combination-text"),
-                html.Hr(),
-                html.P(id="analysis-score-text"),
-                html.Ul(id="analysis-details-list", className="list-unstyled"),
-            ]
-        ),
-        id="analysis-result-card",
-        className="mt-4",
-        style={"display": "none"},
-    )
-
-    return html.Div(
-        [
-            dcc.Store(id="store-validated-omega", data=None),
-            dbc.Row(
-                number_inputs + [clear_button],
-                justify="center",
-                align="center",
-                className="mb-5 g-2",
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        dbc.Button(
-                            "ANALIZAR COMBINACIÓN",
-                            id="btn-analizar",
-                            color="dark",
-                            className="action-button",
-                        ),
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        dbc.Button(
-                            "GENERAR OMEGA / AJUSTAR",
-                            id="btn-generar",
-                            color="dark",
-                            className="action-button",
-                        ),
-                        width="auto",
-                    ),
-                ],
-                justify="center",
-                align="center",
-                className="g-3 mb-4",
-            ),
-            dbc.Row(
-                dbc.Col(analysis_result_card, width=12, md=8, lg=6), justify="center"
-            ),
-            html.Div(
-                [
-                    dbc.Row(
-                        dbc.Col(
-                            dcc.Input(
-                                id="input-nombre",
-                                placeholder="Nombre Completo",
-                                className="form-control",
-                                disabled=True,
-                            ),
-                            width=8,
-                            md=6,
-                            lg=5,
-                            xl=4,
-                        ),
-                        justify="center",
-                        className="mb-3",
-                    ),
-                    dbc.Row(
-                        dbc.Col(
-                            dcc.Input(
-                                id="input-movil",
-                                placeholder="Número de Móvil",
-                                type="tel",
-                                className="form-control",
-                                disabled=True,
-                            ),
-                            width=8,
-                            md=6,
-                            lg=5,
-                            xl=4,
-                        ),
-                        justify="center",
-                        className="mb-4",
-                    ),
-                    dbc.Row(
-                        dbc.Col(
-                            dbc.Button(
-                                "REGISTRAR OMEGA",
-                                id="btn-registrar",
-                                color="dark",
-                                outline=True,
-                                className="action-button",
-                                disabled=True,
-                            ),
-                            width="auto",
-                        ),
-                        justify="center",
-                    ),
-                ],
-                className="mt-5 pt-3",
-            ),
-        ]
-    )
-
-
-def create_configuracion_view():
-    return html.Div(
-        [
-            html.H3(
-                "Configuración y Mantenimiento", className="text-center text-dark mb-4"
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        dbc.Button(
-                            "1. ACTUALIZAR HISTÓRICO",
-                            id="btn-gen-historico",
-                            color="dark",
-                            className="action-button",
-                        ),
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        dbc.Button(
-                            "2. ACTUALIZAR FRECUENCIAS",
-                            id="btn-gen-omega",
-                            color="dark",
-                            className="action-button",
-                        ),
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        dbc.Button(
-                            "3. OPTIMIZAR UMBRALES (ML)",
-                            id="btn-optimize-thresholds",
-                            color="primary",
-                            className="action-button",
-                        ),
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        dbc.Button(
-                            "4. ENRIQUECER Y PRE-GENERAR",
-                            id="btn-enrich-pregen",
-                            color="dark",
-                            className="action-button",
-                        ),
-                        width="auto",
-                    ),
-                ],
-                justify="center",
-                className="g-3",
-            ),
-            html.Div(
-                [
-                    html.P(
-                        "Procesando, por favor espere...",
-                        id="progress-text",
-                        className="mt-4 mb-2 text-muted",
-                    ),
-                    dbc.Progress(
-                        id="progress-bar",
-                        value=0,
-                        striped=True,
-                        animated=True,
-                        style={"height": "20px"},
-                    ),
-                ],
-                id="progress-container",
-                style={"display": "none"},
-            ),
-        ]
-    )
-
-
-def create_registros_view():
-    confirmation_modal = dbc.Modal(
-        [
-            dbc.ModalHeader("Confirmar Eliminación"),
-            dbc.ModalBody("¿Estás seguro?"),
-            dbc.ModalFooter(
-                [
-                    dbc.Button("Cancelar", id="btn-cancel-delete"),
-                    dbc.Button("Confirmar", id="btn-confirm-delete", color="danger"),
-                ]
-            ),
-        ],
-        id="modal-confirm-delete",
-        is_open=False,
-    )
-
-    import_modal = dbc.Modal(
-        [
-            dbc.ModalHeader("Confirmar Importación"),
-            dbc.ModalBody(
-                "Se han encontrado registros existentes. ¿Deseas sobrescribirlos con los datos del archivo de respaldo?"
-            ),
-            dbc.ModalFooter(
-                [
-                    dbc.Button(
-                        "No Sobrescribir (Solo añadir nuevos)",
-                        id="btn-import-no-overwrite",
-                        color="secondary",
-                    ),
-                    dbc.Button(
-                        "Sí, Sobrescribir", id="btn-import-overwrite", color="primary"
-                    ),
-                ]
-            ),
-        ],
-        id="modal-confirm-import",
-        is_open=False,
-    )
-
-    return html.Div(
-        [
-            dcc.Store(id="store-record-to-delete", data=None),
-            confirmation_modal,
-            import_modal,
-            html.H3(
-                "Registro de Combinaciones Omega",
-                className="text-center text-dark mb-4",
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        dbc.Button(
-                            "Exportar a JSON",
-                            id="btn-export-registros",
-                            color="success",
-                            outline=True,
-                        ),
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        dbc.Button(
-                            "Importar desde JSON",
-                            id="btn-import-registros",
-                            color="info",
-                            outline=True,
-                        ),
-                        width="auto",
-                    ),
-                    dbc.Col(
-                        dbc.Button(
-                            "Refrescar Datos",
-                            id="btn-refresh-registros",
-                            className="ms-auto",
-                            color="primary",
-                            outline=True,
-                        )
-                    ),
-                ],
-                className="mb-3",
-            ),
-            dash_table.DataTable(
-                id="table-registros",
-            ),
-        ]
-    )
-
-
-def create_historicos_view():
-    return html.Div(
-        [
-            html.H3(
-                "Melate Retro - Registros Históricos",
-                className="text-center text-dark mb-4",
-            ),
-            dbc.Row(
-                dbc.Col(
-                    dbc.Button(
-                        "Refrescar Datos",
-                        id="btn-refresh-historicos",
-                        className="mb-3",
-                        color="primary",
-                        outline=True,
-                    )
-                ),
-                justify="end",
-            ),
-            dash_table.DataTable(
-                id="table-historicos",
-                columns=[
-                    {"name": "Concurso", "id": "concurso"},
-                    {"name": "Fecha", "id": "fecha"},
-                    {"name": "R1", "id": "r1"},
-                    {"name": "R2", "id": "r2"},
-                    {"name": "R3", "id": "r3"},
-                    {"name": "R4", "id": "r4"},
-                    {"name": "R5", "id": "r5"},
-                    {"name": "R6", "id": "r6"},
-                    {
-                        "name": "Bolsa",
-                        "id": "bolsa",
-                        "type": "numeric",
-                        "format": {"specifier": "$,.0f"},
-                    },
-                    {"name": "Clase Omega", "id": "es_omega_str"},
-                    {
-                        "name": "Omega Score",
-                        "id": "omega_score",
-                        "type": "numeric",
-                        "format": {"specifier": ".4f"},
-                    },
-                    {"name": "Af. Cuartetos", "id": "afinidad_cuartetos"},
-                    {"name": "Af. Tercias", "id": "afinidad_tercias"},
-                    {"name": "Af. Pares", "id": "afinidad_pares"},
-                ],
-                data=[],
-                page_size=20,
-                sort_action="native",
-                filter_action="native",
-                style_cell={"textAlign": "center", "minWidth": "80px"},
-                style_header={
-                    "fontWeight": "bold",
-                    "backgroundColor": "rgb(230, 230, 230)",
-                },
-                style_table={"overflowX": "auto"},
-                style_data_conditional=[],
-            ),
-        ]
-    )
-
-
-def create_graficos_view():
-    def create_graph_card(graph_id, title):
-        return dbc.Card(
-            [
-                dbc.CardHeader(html.H5(title, className="mb-0")),
-                dbc.CardBody(dcc.Graph(id=graph_id)),
-            ],
-            className="mb-4",
-        )
-
-    return html.Div(
-        [
-            html.H3("Gráficos y Estadísticas", className="text-center text-dark mb-4"),
-            dbc.Row(
-                dbc.Col(
-                    dbc.Button(
-                        "Generar/Refrescar Gráficos",
-                        id="btn-refresh-graficos",
-                        className="mb-3",
-                        color="primary",
-                    )
-                ),
-                justify="end",
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        create_graph_card(
-                            "graph-universo", "Clase Omega vs. Universo Total"
-                        ),
-                        md=4,
-                    ),
-                    dbc.Col(
-                        create_graph_card(
-                            "graph-historico", "Clase Omega en Sorteos Históricos"
-                        ),
-                        md=4,
-                    ),
-                    dbc.Col(
-                        create_graph_card(
-                            "graph-ganadores", "Clase Omega en Sorteos con Premio"
-                        ),
-                        md=4,
-                    ),
-                ]
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        dbc.Card(
-                            [
-                                dbc.CardHeader(
-                                    html.H5(
-                                        "Omega Score vs. Bolsa Acumulada (Sorteos Ganadores)",
-                                        className="mb-0",
-                                    )
-                                ),
-                                dbc.CardBody(dcc.Graph(id="graph-scatter-score-bolsa")),
-                            ]
-                        ),
-                        width=12,
-                    )
-                ]
-            ),
-        ]
-    )
-
-
-def create_monitoring_view():
-    """Crea el layout para la nueva pestaña de Monitoreo Estadístico."""
-
-    def create_graph_card(graph_id, title, subtitle):
-        return dbc.Card(
-            dbc.CardBody(
-                [
-                    html.H5(title, className="card-title"),
-                    html.H6(subtitle, className="card-subtitle text-muted mb-3"),
-                    dcc.Graph(id=graph_id),
-                ]
-            ),
-            className="mb-4",
-        )
-
-    return html.Div(
-        [
-            html.H3(
-                "Panel de Control de Salud y Monitoreo Estadístico",
-                className="text-center text-dark mb-4",
-            ),
-            html.P(
-                "Esta sección permite vigilar la consistencia del modelo a lo largo del tiempo. "
-                "Cualquier salto o comportamiento anómalo en estas curvas puede indicar un cambio en la naturaleza del sorteo "
-                "o un efecto secundario de una modificación en el código.",
-                className="text-center text-muted",
-            ),
-            dbc.Row(
-                dbc.Col(
-                    dbc.Button(
-                        "Generar/Refrescar Gráficos de Monitoreo",
-                        id="btn-refresh-monitoring",
-                        className="mb-4",
-                        color="primary",
-                        style={"width": "100%"},
-                    )
-                )
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        create_graph_card(
-                            "graph-affinity-trajectory",
-                            "Evolución de la Distribución de Afinidades",
-                            "Muestra la media (línea sólida) y el rango (mín/máx) de las afinidades para todos los sorteos históricos en cada punto.",
-                        ),
-                        width=12,
-                    ),
-                ]
-            ),
-            dbc.Row(
-                [
-                    dbc.Col(
-                        create_graph_card(
-                            "graph-freq-trajectory",
-                            "Evolución de las Frecuencias Base",
-                            "Curvas de crecimiento del modelo estadístico. Deberían aplanarse con el tiempo.",
-                        ),
-                        md=6,
-                    ),
-                    dbc.Col(
-                        create_graph_card(
-                            "graph-threshold-trajectory",
-                            "Evolución de Umbrales Óptimos",
-                            "Resultado de la optimización de ML en cada punto de la trayectoria.",
-                        ),
-                        md=6,
-                    ),
-                ]
-            ),
-        ]
-    )
-
-
-def create_layout():
-    return dbc.Container(
-        [
-            create_header(),
-            create_navigation(),
-            html.Div(id="view-content"),
-            html.Div(id="notification-container", className="mt-4"),
-        ],
-        fluid=False,
-        className="main-container",
-    )
