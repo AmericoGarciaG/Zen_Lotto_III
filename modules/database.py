@@ -194,6 +194,13 @@ def read_trajectory_data(db_path: str, table_name: str) -> pd.DataFrame:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
+def read_omega_cero_metrics(db_path: str) -> pd.DataFrame:
+    """
+    Función dedicada para leer la tabla de métricas de Omega Cero,
+    que no tiene la columna 'ultimo_concurso_usado'.
+    """
+    return _read_df_from_db("SELECT * FROM omega_cero_metrics", db_path)
+
 def export_registrations_to_json(db_path: str, backup_file_path: str) -> Tuple[bool, str]:
     try:
         df = get_all_registrations(db_path)
