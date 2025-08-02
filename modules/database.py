@@ -194,6 +194,13 @@ def read_trajectory_data(db_path: str, table_name: str) -> pd.DataFrame:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
+def read_full_omega_class(db_path: str) -> pd.DataFrame:
+    """
+    Lee la tabla 'omega_class' completa, que contiene todas las combinaciones Omega
+    del universo de un juego, no solo las que han salido.
+    """
+    return _read_df_from_db(f"SELECT * FROM {TABLE_NAME_OMEGA}", db_path)
+
 def read_omega_cero_metrics(db_path: str) -> pd.DataFrame:
     """
     Función dedicada para leer la tabla de métricas de Omega Cero,

@@ -505,15 +505,42 @@ if __name__ == "__main__":
         if not fue_un_clic_real('btn-refresh-graficos'): return (no_update,) * 7
         from modules import database, omega_logic
         game_config = config.get_game_config(game_id)
-        empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        
+        # --- INICIO DE LA MODIFICACIÓN ---
         df_trajectory = database.read_omega_score_trajectory(game_config['paths']['db'])
         fig_trajectory = go.Figure()
         if not df_trajectory.empty:
-            fig_trajectory.add_trace(go.Scatter(x=df_trajectory['concurso'], y=df_trajectory['original_omega_score'], mode='lines', name='Score Original (al nacer)', line=dict(color='rgba(255, 100, 100, 0.6)')))
-            fig_trajectory.add_trace(go.Scatter(x=df_trajectory['concurso'], y=df_trajectory['current_omega_score'], mode='lines', name='Score Actual (actualizado)', line=dict(color='rgba(100, 100, 255, 0.8)')))
-            fig_trajectory.update_layout(title_x=0.5, template='simple_white', xaxis_title='Sorteo', yaxis_title='Omega Score', shapes=[dict(type='line', y0=0, y1=0, x0=df_trajectory['concurso'].min(), x1=df_trajectory['concurso'].max(), line=dict(color='Black', width=1, dash='dot'))])
+            # --- INICIO DE LA CORRECCIÓN VISUAL ---
+            # Mantenemos las líneas de los ganadores
+            fig_trajectory.add_trace(go.Scatter(
+                x=df_trajectory['concurso'], y=df_trajectory['original_omega_score'],
+                mode='lines', name='Score Original (Ganador)', line=dict(color='rgba(231, 76, 60, 0.7)') # Rojo más visible
+            ))
+            fig_trajectory.add_trace(go.Scatter(
+                x=df_trajectory['concurso'], y=df_trajectory['current_omega_score'],
+                mode='lines', name='Score Actual (Ganador)', line=dict(color='rgba(52, 152, 219, 0.8)') # Azul más visible
+            ))
+            
+            # Cambiamos la línea aleatoria a una línea sólida y de otro color
+            if 'random_omega_score' in df_trajectory.columns:
+                fig_trajectory.add_trace(go.Scatter(
+                    x=df_trajectory['concurso'], y=df_trajectory['random_omega_score'],
+                    mode='lines', name='Score Original (Aleatorio)', 
+                    line=dict(color='rgba(46, 204, 113, 0.6)', width=1.5) # Verde sólido
+                ))
+            
+            fig_trajectory.update_layout(
+                title_x=0.5, template='simple_white', xaxis_title='Sorteo', yaxis_title='Omega Score',
+                legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+                shapes=[dict(type='line', y0=0, y1=0, x0=df_trajectory['concurso'].min(), x1=df_trajectory['concurso'].max(), line=dict(color='Black', width=1, dash='dot'))]
+            )
         else:
             fig_trajectory.update_layout(title_text=f"Trayectoria de Scores<br>({game_config['display_name']})<br>(No generada)", title_x=0.5)
+        # --- FIN DE LA MODIFICACIÓN ---
+        
+        # El resto de la función para los otros 6 gráficos no cambia
+        # ...
+        empty_fig = go.Figure().update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         total_omega = database.count_omega_class(game_config['paths']['db'])
         fig_universo = create_donut_chart([total_omega, game_config['total_combinations'] - total_omega], ["Omega", "Otras"], "Universo", game_config['display_name'])
         df_historico = database.read_historico_from_db(game_config['paths']['db'])
@@ -545,6 +572,7 @@ if __name__ == "__main__":
             fig_score_omega_class = px.histogram(df_omega_class, x="omega_score", template='simple_white', title='Distribución Omega Score (Clase Omega)')
         else:
             fig_score_omega_class.update_layout(title_text=f"Distribución Score (Clase Omega)<br>({game_config['display_name']})<br>(No generada)", title_x=0.5)
+            
         return fig_universo, fig_historico, fig_ganadores, fig_scatter, fig_score_historico, fig_score_omega_class, fig_trajectory
 
     # --- CALLBACK DE LA PESTAÑA DE OMEGA CERO ---

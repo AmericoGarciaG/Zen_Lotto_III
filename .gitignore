@@ -33255,3 +33255,6 @@ cache/cache.db-shm
 cache/cache.db-wal
 utils/__pycache__/__init__.cpython-311.pyc
 utils/__pycache__/parallel_utils.cpython-311.pyc
+zen_data/frecuencias.json
+zen_data/system_state.json
+zen_data/zen_lotto.db
