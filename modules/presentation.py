@@ -21,12 +21,26 @@ def create_navigation():
         dbc.Button("MONITOREO", id="btn-nav-monitoreo", className="nav-button") if config.DEBUG_MODE else None,
         # --- NUEVO BOTÓN AÑADIDO ---
         dbc.Button("OMEGA CERO", id="btn-nav-omega-cero", className="nav-button"),
+        dbc.Button("FÉNIX", id="btn-nav-fenix", className="nav-button"), # NUEVO BOTÓN
         dbc.Button("REGISTRO DE OMEGAS", id="btn-nav-registros", className="nav-button"),
         dbc.Button("CONFIGURACIÓN", id="btn-nav-configuracion", className="nav-button"),
     ]
     # Filtra los botones nulos (si DEBUG_MODE es False)
     buttons = [b for b in buttons if b is not None]
     return dbc.Row(dbc.Col(html.Div(dbc.ButtonGroup(buttons, id="navigation-group"), className="nav-pill-container"), width="auto"), justify="center", className="mb-5")
+
+def create_fenix_view():
+    """Crea la vista para el Veredicto del Proyecto Fénix."""
+    return html.Div([
+        html.H3("Veredicto Fénix: ¿Es la Reactividad un Predictor?", className="text-center text-dark mb-4"),
+        dbc.Row(dbc.Col(dbc.Button("Realizar Análisis de Distribución", id="btn-run-fenix-analysis", color="primary", className="mb-4 w-100")), justify="center"),
+        dbc.Alert("Ejecute 'calculate_fenix_score.py' primero si los gráficos aparecen vacíos.", color="info"),
+        dbc.Row([
+            dbc.Col(dcc.Loading(dcc.Graph(id="graph-fenix-histogram")), md=6),
+            dbc.Col(dcc.Loading(dcc.Graph(id="graph-fenix-boxplot")), md=6),
+        ]),
+        dbc.Row(dbc.Col(html.Div(id="fenix-stats-summary"), className="mt-4"))
+    ])
 
 def create_omega_cero_view():
     """Crea el layout para el nuevo tablero de análisis Omega Cero."""

@@ -31,6 +31,78 @@ def _create_tables_if_not_exist(db_path: str):
     finally:
         if conn:
             conn.close()
+    
+def add_fenix_score_column(db_path: str):
+    """Añade la columna fenix_score a la tabla omega_class si no existe."""
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        cursor = conn.cursor()
+        # Verificar si la columna ya existe
+        cursor.execute(f"PRAGMA table_info({TABLE_NAME_OMEGA});")
+        columns = [info[1] for info in cursor.fetchall()]
+        if 'fenix_score' not in columns:
+            logger.info(f"Añadiendo columna 'fenix_score' a la tabla '{TABLE_NAME_OMEGA}'.")
+            cursor.execute(f"ALTER TABLE {TABLE_NAME_OMEGA} ADD COLUMN fenix_score REAL")
+            conn.commit()
+        else:
+            logger.info("La columna 'fenix_score' ya existe.")
+    except Exception as e:
+        logger.error(f"Error añadiendo la columna fenix_score: {e}", exc_info=True)
+    finally:
+        if conn: conn.close()
+        
+def update_fenix_scores_in_db(db_path: str, fenix_scores_df: pd.DataFrame, game_config: Dict[str, Any]):
+    """
+    Actualiza la columna fenix_score para las combinaciones dadas.
+    Esta versión es dinámica, se adapta al 'n' de cada juego y asegura la compatibilidad de tipos de datos.
+    """
+    if fenix_scores_df.empty:
+        return
+    
+    n = game_config['n']
+    conn: Optional[sqlite3.Connection] = None
+    
+    try:
+        conn = sqlite3.connect(db_path, timeout=20)
+        cursor = conn.cursor()
+        
+        combo_cols_for_index = ", ".join([f'c{i}' for i in range(1, n + 1)])
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_omega_class_combos ON {TABLE_NAME_OMEGA} ({combo_cols_for_index});")
+
+        cols_to_match = [f'c{i}' for i in range(1, n + 1)]
+        where_clause = " AND ".join([f"{col} = ?" for col in cols_to_match])
+        
+        update_query = f"""
+            UPDATE {TABLE_NAME_OMEGA}
+            SET fenix_score = ?
+            WHERE {where_clause};
+        """
+        
+        # --- LA CORRECCIÓN DEFINITIVA ---
+        # Forzamos la conversión de cada número en la combinación a un entero nativo de Python.
+        data_to_update = [
+            tuple([row['fenix_score']] + [int(c) for c in row['combination']])
+            for _, row in fenix_scores_df.iterrows()
+        ]
+        # --- FIN DE LA CORRECCIÓN ---
+            
+        cursor.executemany(update_query, data_to_update)
+        updated_rows = cursor.rowcount
+        conn.commit()
+        
+        # El log ahora reflejará el número real de filas afectadas, que ya no debería ser 0.
+        if updated_rows == -1:
+             logger.warning("El driver de SQLite no reportó el número de filas actualizadas, pero la operación se completó.")
+             logger.info(f"Se intentó actualizar {len(data_to_update)} registros con su Score Fénix.")
+        else:
+            logger.info(f"Se actualizaron {updated_rows} registros con su Score Fénix.")
+
+    except Exception as e:
+        logger.error(f"Error crítico al actualizar los Fenix Scores: {e}", exc_info=True)
+        if conn: conn.rollback()
+    finally:
+        if conn: conn.close()
 
 def save_historico_to_db(df: pd.DataFrame, db_path: str, mode: Literal['replace', 'append'] = 'replace') -> Tuple[bool, str]:
     if df.empty and mode == 'append': return True, "No hay nuevos registros que guardar."
@@ -224,3 +296,12 @@ def export_registrations_to_json(db_path: str, backup_file_path: str) -> Tuple[b
 def read_omega_score_trajectory(db_path: str) -> pd.DataFrame:
     """Lee la tabla con la trayectoria de los Omega Scores."""
     return _read_df_from_db("SELECT * FROM omega_score_trajectory ORDER BY concurso ASC", db_path)
+
+def read_golden_trajectory(db_path: str) -> pd.DataFrame:
+    """Lee la tabla con la trayectoria de la Línea Dorada."""
+    return _read_df_from_db("SELECT * FROM golden_trajectory ORDER BY concurso ASC", db_path)
+
+def read_omega_class_with_fenix(db_path: str, only_unplayed: bool = True) -> pd.DataFrame:
+    """Lee combinaciones de la clase omega con su fenix_score, opcionalmente filtrando las que no han salido."""
+    where_clause = "WHERE ha_salido = 0" if only_unplayed else ""
+    return _read_df_from_db(f"SELECT c1, c2, c3, c4, c5, c6, fenix_score FROM {TABLE_NAME_OMEGA} {where_clause}", db_path)
